@@ -105,6 +105,24 @@ def export_csv(conn: sqlite3.Connection, output: str) -> int:
     return n
 
 
+def skip_reason_group(reason: str) -> str:
+    """Normalize per-tick changing numeric details to auditable root causes."""
+    if reason.startswith("best modeled edge "):
+        return "modeled edge below configured threshold"
+    if reason.startswith("BUY UP:") or reason.startswith("BUY DOWN:"):
+        if "book ask " in reason:
+            return "orderbook/snapshot price mismatch"
+        if "best-price depth" in reason:
+            return "insufficient top-of-book depth"
+        if "no opposite-side resting bid" in reason:
+            return "missing opposite-side resting bids"
+    if reason.startswith("Kalshi quote is stale"):
+        return "stale Kalshi quote"
+    if reason.startswith("BTC spot is stale"):
+        return "stale BTC spot"
+    return reason
+
+
 def print_report(conn: sqlite3.Connection, limit: int = 15) -> None:
     s = build_summary(conn)
     print("BTC 15m READ-ONLY SIGNAL AUDIT")
@@ -138,7 +156,7 @@ def print_report(conn: sqlite3.Connection, limit: int = 15) -> None:
     skipped = conn.execute(
         "SELECT reason FROM edge_signal_audit WHERE action='SKIP' ORDER BY id DESC LIMIT 500"
     ).fetchall()
-    top_reasons = Counter(row["reason"] for row in skipped).most_common(5)
+    top_reasons = Counter(skip_reason_group(row["reason"]) for row in skipped).most_common(5)
     if top_reasons:
         print("\nTop recent SKIP reasons (up to 500 latest SKIPs):")
         for reason, n in top_reasons:
