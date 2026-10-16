@@ -67,9 +67,9 @@ class Trader:
             logger.exception("Failed to fetch/store orderbook for %s", snapshot.ticker)
 
         self._check_divergence(snapshot)
-        self._maybe_fetch_trend(snapshot.ticker)
 
         if prediction is None:
+            self._maybe_fetch_trend(snapshot.ticker)
             return
 
         self._storage.fill_initial_prediction_if_missing(snapshot.ticker, prediction)
@@ -87,6 +87,10 @@ class Trader:
             price_sample_time=latest_sample.ts if latest_sample is not None else None,
         )
         logger.info("Edge signal: %s", signal.log_line(self._settings.signal_fee_per_contract_dollars))
+
+        # Fetch lower-frequency trend data after the time-sensitive signal;
+        # a slow candle request must not make the order-book comparison stale.
+        self._maybe_fetch_trend(snapshot.ticker)
 
         if not self._should_propose_trade(snapshot, prediction):
             return
