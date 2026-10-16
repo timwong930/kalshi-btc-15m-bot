@@ -5,11 +5,11 @@ import math
 
 from config.settings import Settings
 from src.divergence import check_divergence
+from src.edge_signals import evaluate_edge_signal
 from src.kalshi_client import KalshiClient
 from src.markets import MarketSnapshot, get_orderbook_summary
 from src.orders import get_balance, get_positions, place_order
 from src.predictor import Prediction, predict
-from src.edge_signals import evaluate_edge_signal
 from src.price_feed import PriceFeed
 from src.storage import Storage
 from src.trend import fetch_trend_state
