@@ -8,7 +8,10 @@ import sqlite3
 import pytest
 
 from src.ml_dataset import (
-    FEATURES, Example, collect_outcome_examples, load_reversal_examples,
+    FEATURES,
+    Example,
+    collect_outcome_examples,
+    load_reversal_examples,
 )
 from src.ml_models import final_shadow_model, fit_model, grouped_markets, walk_forward
 from src.ml_pipeline import run_cycle
