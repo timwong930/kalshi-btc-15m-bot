@@ -286,7 +286,9 @@ def walk_forward(
     return result
 
 
-def final_shadow_model(\n    examples: list[Example], feature_names: tuple[str, ...], algorithm: str = "logistic"\n) -> dict:
+def final_shadow_model(
+    examples: list[Example], feature_names: tuple[str, ...], algorithm: str = "logistic"
+) -> dict:
     """Serialized artifact for offline inspection ONLY, not consumed by the bot."""
     if len(examples[0].features) != len(feature_names):
         raise ValueError("Artifact feature names do not match examples")
