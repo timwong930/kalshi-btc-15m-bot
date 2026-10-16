@@ -215,7 +215,7 @@ def run_cycle(
 
         report["status"] = (
             "SHADOW_TRAINED" if any_trained else
-            "EVALUATED_TRAINING_COOLDOWN" if in_cooldown else
+            "LABELS_UPDATED_TRAINING_COOLDOWN" if in_cooldown else
             "WAITING_FOR_MORE_SETTLED_MARKETS"
         )
         atomic_json(output / "latest_report.json", report)
