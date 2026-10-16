@@ -363,6 +363,20 @@ async def run_collector(database: str, poll_seconds: float, kalshi_ws: bool, key
         store.close()
 
 
+def backup_research_database(source_path: str, backup_directory: str) -> Path:
+    """Online SQLite snapshot (safe while the collector writes WAL rows)."""
+    source = Path(source_path).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Research database not found: {source}")
+    directory = Path(backup_directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    destination = directory / f"research_stream_{suffix}.db"
+    with sqlite3.connect(str(source)) as src, sqlite3.connect(str(destination)) as dest:
+        src.backup(dest)
+    return destination
+
+
 def print_status(path: str) -> None:
     db = Path(path).resolve()
     if not db.is_file():
@@ -399,7 +413,11 @@ def main() -> None:
     parser.add_argument("--rest-seconds", type=float, default=float(os.getenv("RESEARCH_REST_SECONDS", "5")))
     parser.add_argument("--kalshi-ws", action="store_true", help="Opt into signed Kalshi market-data WS")
     parser.add_argument("--status", action="store_true", help="Inspect current research DB and exit")
+    parser.add_argument("--backup", action="store_true", help="Take online SQLite backup and exit")
     args = parser.parse_args()
+    if args.backup:
+        print(f"Research backup: {backup_research_database(args.db, 'data/backups')}")
+        return
     if args.status:
         print_status(args.db)
         return
