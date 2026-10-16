@@ -24,6 +24,7 @@ SIGNAL_VERSION = "edge-v1-audit-20261015"
 class EdgeSignal:
     action: Literal["BUY UP", "BUY DOWN", "SKIP"]
     reason: str
+    candidate_direction: Literal["BUY UP", "BUY DOWN"] | None = None
     model_probability: float | None = None
     ask_dollars: float | None = None
     estimated_net_edge_dollars: float | None = None
@@ -131,6 +132,7 @@ def evaluate_edge_signal(
             "SKIP",
             f"best modeled edge {edge:+.6f} dollars/contract below threshold "
             f"{threshold:.6f} (fee assumption {fee:.4f})",
+            candidate_direction=action,
             model_probability=model_p,
             ask_dollars=ask,
             estimated_net_edge_dollars=edge,
@@ -139,6 +141,7 @@ def evaluate_edge_signal(
     return EdgeSignal(
         action=action,
         reason="model-minus-ask-minus-assumed-fee exceeds configured threshold",
+        candidate_direction=action,
         model_probability=model_p,
         ask_dollars=ask,
         estimated_net_edge_dollars=edge,
