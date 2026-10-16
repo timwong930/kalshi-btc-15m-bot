@@ -372,8 +372,13 @@ def backup_research_database(source_path: str, backup_directory: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     destination = directory / f"research_stream_{suffix}.db"
-    with sqlite3.connect(str(source)) as src, sqlite3.connect(str(destination)) as dest:
+    src = sqlite3.connect(str(source))
+    dest = sqlite3.connect(str(destination))
+    try:
         src.backup(dest)
+    finally:
+        src.close()
+        dest.close()
     return destination
 
 
