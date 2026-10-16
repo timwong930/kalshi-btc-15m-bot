@@ -82,6 +82,98 @@ def train_logistic(examples: list[Example], epochs: int = 300) -> LogisticModel:
     return LogisticModel(means, scales, tuple(weights), bias)
 
 
+@dataclass(frozen=True)
+class BoostedStumps:
+    intercept: float
+    trees: tuple[tuple[int, float, float, float], ...]
+    learning_rate: float = 0.10
+
+    def predict(self, features: tuple[float, ...]) -> float:
+        z = self.intercept
+        for feature, threshold, left, right in self.trees:
+            z += self.learning_rate * (left if features[feature] <= threshold else right)
+        return _clamp(_sigmoid(z))
+
+    def as_dict(self) -> dict:
+        return {
+            "algorithm": "offline-boosted-stumps-v1",
+            "intercept": self.intercept,
+            "learning_rate": self.learning_rate,
+            "trees": [list(tree) for tree in self.trees],
+        }
+
+
+def train_boosted_stumps(examples: list[Example], rounds: int = 40) -> BoostedStumps:
+    """Small regularized gradient-boosted classification trees (depth=1).
+
+    All split thresholds come only from training observations. This is a
+    deliberately conservative, dependency-free alternative to large GBMs.
+    """
+    if len(examples) < 2:
+        raise ValueError("Not enough training rows")
+    dimensions = len(examples[0].features)
+    if dimensions < 1 or any(len(row.features) != dimensions for row in examples):
+        raise ValueError("Inconsistent training dimensions")
+    prior = _clamp(mean(row.y for row in examples))
+    intercept = math.log(prior / (1 - prior))
+    predictions = [prior] * len(examples)
+    trees = []
+    candidates = []
+    for j in range(dimensions):
+        values = sorted({e.features[j] for e in examples})
+        if len(values) < 2:
+            candidates.append([])
+            continue
+        # At most four distinct split proposals per feature; no test leakage.
+        thresholds = sorted({
+            (values[max(0, min(len(values) - 2, int(q * (len(values) - 1))))] +
+             values[max(1, min(len(values) - 1, int(q * (len(values) - 1)) + 1))]) / 2
+            for q in (0.2, 0.4, 0.6, 0.8)
+        })
+        candidates.append(thresholds)
+    for _ in range(rounds):
+        residuals = [e.y - p for e, p in zip(examples, predictions)]
+        hessians = [max(0.02, p * (1 - p)) for p in predictions]
+        best = None
+        for j, thresholds in enumerate(candidates):
+            for threshold in thresholds:
+                lg = lh = rg = rh = 0.0
+                ln = rn = 0
+                for row, g, h in zip(examples, residuals, hessians):
+                    if row.features[j] <= threshold:
+                        lg += g
+                        lh += h
+                        ln += 1
+                    else:
+                        rg += g
+                        rh += h
+                        rn += 1
+                if min(ln, rn) < max(3, len(examples) // 20):
+                    continue
+                gain = lg * lg / (lh + 5) + rg * rg / (rh + 5)
+                if best is None or gain > best[0]:
+                    best = (gain, j, threshold, lg / (lh + 5), rg / (rh + 5))
+        if best is None or best[0] < 1e-8:
+            break
+        _, feature, threshold, left, right = best
+        left, right = max(-1, min(1, left)), max(-1, min(1, right))
+        trees.append((feature, threshold, left, right))
+        predictions = [
+            _sigmoid(math.log(_clamp(p) / (1 - _clamp(p)))
+                     + 0.10 * (left if row.features[feature] <= threshold else right))
+            for row, p in zip(examples, predictions)
+        ]
+    return BoostedStumps(intercept, tuple(trees))
+
+
+def fit_model(examples: list[Example], algorithm: str):
+    if algorithm == "logistic":
+        return train_logistic(examples)
+    if algorithm == "boosted_stumps":
+        return train_boosted_stumps(examples)
+    raise ValueError(f"Unsupported shadow model: {algorithm}")
+
+
 def brier(p: float, label: int) -> float:
     return (_clamp(p) - label) ** 2
 
@@ -104,6 +196,7 @@ def walk_forward(
     fold_test_markets: int = 20,
     *,
     baseline_type: str = "market",
+    algorithm: str = "logistic",
 ) -> dict:
     """Expanding chronological folds, with paired uncertainty BY MARKET.
 
@@ -112,7 +205,7 @@ def walk_forward(
     """
     groups = grouped_markets(examples)
     result: dict = {
-        "model": MODEL_VERSION, "total_rows": len(examples),
+        "model": algorithm, "total_rows": len(examples),
         "distinct_markets": len(groups),
         "folds": 0, "tested_markets": 0,
         "status": "INSUFFICIENT_DATA",
@@ -140,7 +233,7 @@ def walk_forward(
             r.entry_ms for _, _, cohort in test_groups for r in cohort
         ):
             continue
-        model = train_logistic(train)
+        model = fit_model(train, algorithm)
         train_rate = _clamp(mean(row.y for row in train))
         fold_market_differences = []
         for _, _, cohort in test_groups:
@@ -193,11 +286,11 @@ def walk_forward(
     return result
 
 
-def final_shadow_model(examples: list[Example], feature_names: tuple[str, ...]) -> dict:
+def final_shadow_model(\n    examples: list[Example], feature_names: tuple[str, ...], algorithm: str = "logistic"\n) -> dict:
     """Serialized artifact for offline inspection ONLY, not consumed by the bot."""
     if len(examples[0].features) != len(feature_names):
         raise ValueError("Artifact feature names do not match examples")
-    model = train_logistic(examples)
+    model = fit_model(examples, algorithm)
     return {
         **model.as_dict(),
         "feature_names": list(feature_names),
