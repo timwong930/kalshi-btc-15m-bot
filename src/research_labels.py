@@ -85,6 +85,7 @@ def build_labels(
     rdb = sqlite3.connect(f"{research.as_uri()}?mode=ro", uri=True)
     odb = sqlite3.connect(f"{outcomes.as_uri()}?mode=ro", uri=True)
     rdb.row_factory = sqlite3.Row
+    odb.row_factory = sqlite3.Row
     try:
         settled = {
             row["ticker"]: row["result"]
