@@ -91,7 +91,8 @@ def test_skip_when_edge_below_minimum_after_assumed_fees():
 def test_insufficient_top_level_liquidity_skips():
     signal = _evaluate(yes_depth=0, no_depth=2)
     assert signal.action == "SKIP"
-    assert "liquid" in signal.reason
+    assert "BUY UP: best-price depth 2 below 5" in signal.reason
+    assert "BUY DOWN: no opposite-side resting bid" in signal.reason
 
 
 def test_stale_market_data_skips():
