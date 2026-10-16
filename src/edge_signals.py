@@ -70,7 +70,8 @@ def evaluate_edge_signal(
     conditional on model calibration and isn't arbitrage or guaranteed profit.
     """
     now = now or datetime.now(timezone.utc)
-    if snapshot.status != "open":
+    # The status=open QUERY returns market.status="active" in the response.
+    if snapshot.status not in ("active", "open"):
         return EdgeSignal("SKIP", "market is not open")
     if prediction is None or prediction.ticker != snapshot.ticker:
         return EdgeSignal("SKIP", "no matching model prediction yet")
