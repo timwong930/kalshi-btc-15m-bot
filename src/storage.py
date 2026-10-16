@@ -4,11 +4,10 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.markets import MarketSnapshot, OrderbookSummary
 from src.predictor import Prediction
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from config.settings import Settings
@@ -145,6 +144,7 @@ CREATE TABLE IF NOT EXISTS edge_signal_audit (
     max_age_allowed_seconds REAL NOT NULL,
     action TEXT NOT NULL CHECK (action IN ('BUY UP', 'BUY DOWN', 'SKIP')),
     reason TEXT NOT NULL,
+    candidate_direction TEXT,
     candidate_model_probability REAL,
     candidate_ask REAL,
     candidate_top_depth REAL,
@@ -513,9 +513,9 @@ class Storage:
                 model_probability_yes, volume, yes_bid, yes_ask, no_bid, no_ask,
                 book_yes_levels_json, book_no_levels_json, fee_assumed,
                 min_edge_required, min_volume_required, min_top_depth_required,
-                max_age_allowed_seconds, action, reason, candidate_model_probability,
+                max_age_allowed_seconds, action, reason, candidate_direction, candidate_model_probability,
                 candidate_ask, candidate_top_depth, estimated_net_edge
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -543,6 +543,7 @@ class Storage:
                 settings.signal_max_data_age_seconds,
                 signal.action,
                 signal.reason,
+                signal.candidate_direction,
                 signal.model_probability,
                 signal.ask_dollars,
                 signal.available_contracts,
