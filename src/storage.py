@@ -4,10 +4,14 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.markets import MarketSnapshot, OrderbookSummary
 from src.predictor import Prediction
+
+if TYPE_CHECKING:
+    from config.settings import Settings
+    from src.edge_signals import EdgeSignal
 
 
 def _parse_float(value: Any) -> float | None:
@@ -111,6 +115,43 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshots (
     no_depth_total REAL
 );
 CREATE INDEX IF NOT EXISTS idx_orderbook_ticker ON orderbook_snapshots(ticker);
+
+-- Append-only history of research-only evaluations. Never represents a filled order.
+CREATE TABLE IF NOT EXISTS edge_signal_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluated_at_utc TEXT NOT NULL,
+    signal_version TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    market_close_utc TEXT NOT NULL,
+    market_status TEXT NOT NULL,
+    snapshot_at_utc TEXT NOT NULL,
+    spot_at_utc TEXT,
+    seconds_remaining REAL,
+    btc_price REAL,
+    floor_strike REAL,
+    model_probability_yes REAL,
+    volume REAL,
+    yes_bid REAL,
+    yes_ask REAL,
+    no_bid REAL,
+    no_ask REAL,
+    book_yes_levels_json TEXT,
+    book_no_levels_json TEXT,
+    fee_assumed REAL NOT NULL,
+    min_edge_required REAL NOT NULL,
+    min_volume_required REAL NOT NULL,
+    min_top_depth_required REAL NOT NULL,
+    max_age_allowed_seconds REAL NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('BUY UP', 'BUY DOWN', 'SKIP')),
+    reason TEXT NOT NULL,
+    candidate_direction TEXT,
+    candidate_model_probability REAL,
+    candidate_ask REAL,
+    candidate_top_depth REAL,
+    estimated_net_edge REAL
+);
+CREATE INDEX IF NOT EXISTS idx_edge_audit_ticker ON edge_signal_audit(ticker, evaluated_at_utc);
+CREATE INDEX IF NOT EXISTS idx_edge_audit_action ON edge_signal_audit(action, evaluated_at_utc);
 
 CREATE TABLE IF NOT EXISTS calibration_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -448,6 +489,65 @@ class Storage:
                 json.dumps(summary.no_levels),
                 summary.yes_depth_total,
                 summary.no_depth_total,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_edge_signal_audit(
+        self,
+        snapshot: MarketSnapshot,
+        prediction: Prediction | None,
+        orderbook: OrderbookSummary | None,
+        signal: "EdgeSignal",
+        settings: "Settings",
+        spot_at: datetime | None,
+    ) -> None:
+        """Append research decision and contemporaneous inputs. Does not place any orders."""
+        from src.edge_signals import SIGNAL_VERSION
+
+        self._conn.execute(
+            """
+            INSERT INTO edge_signal_audit (
+                evaluated_at_utc, signal_version, ticker, market_close_utc, market_status,
+                snapshot_at_utc, spot_at_utc, seconds_remaining, btc_price, floor_strike,
+                model_probability_yes, volume, yes_bid, yes_ask, no_bid, no_ask,
+                book_yes_levels_json, book_no_levels_json, fee_assumed,
+                min_edge_required, min_volume_required, min_top_depth_required,
+                max_age_allowed_seconds, action, reason, candidate_direction, candidate_model_probability,
+                candidate_ask, candidate_top_depth, estimated_net_edge
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                SIGNAL_VERSION,
+                snapshot.ticker,
+                snapshot.close_time.isoformat(),
+                snapshot.status,
+                snapshot.pulled_at.isoformat(),
+                spot_at.isoformat() if spot_at is not None else None,
+                snapshot.time_remaining_seconds,
+                prediction.btc_price if prediction is not None else None,
+                snapshot.floor_strike,
+                prediction.probability_yes if prediction is not None else None,
+                snapshot.volume,
+                snapshot.yes_bid,
+                snapshot.yes_ask,
+                snapshot.no_bid,
+                snapshot.no_ask,
+                json.dumps(orderbook.yes_levels) if orderbook is not None else None,
+                json.dumps(orderbook.no_levels) if orderbook is not None else None,
+                settings.signal_fee_per_contract_dollars,
+                settings.signal_min_net_edge_dollars,
+                settings.signal_min_volume,
+                settings.signal_min_top_level_contracts,
+                settings.signal_max_data_age_seconds,
+                signal.action,
+                signal.reason,
+                signal.candidate_direction,
+                signal.model_probability,
+                signal.ask_dollars,
+                signal.available_contracts,
+                signal.estimated_net_edge_dollars,
             ),
         )
         self._conn.commit()

@@ -74,6 +74,10 @@ class FakeStorage:
         self.orderbook_snapshots = []
         self.divergence_events = []
         self.trend_states = []
+        self.edge_audit = []
+
+    def insert_edge_signal_audit(self, snapshot, prediction, orderbook, signal, settings, spot_at):
+        self.edge_audit.append((snapshot.ticker, signal.action, signal.reason))
 
     def insert_prediction(self, prediction):
         self.predictions.append(prediction)
@@ -136,6 +140,7 @@ def test_predict_only_never_prompts(monkeypatch):
 
     assert len(storage.predictions) == 1
     assert storage.orders == []
+    assert len(storage.edge_audit) == 1
 
 
 def test_trade_skipped_outside_time_window(monkeypatch):

@@ -60,6 +60,13 @@ class Settings:
     signal_research_enabled: bool
     signal_research_interval_hours: float
 
+    # Read-only edge-signal parameters. Fee is an explicit ESTIMATE, not Kalshi's fee schedule.
+    signal_min_net_edge_dollars: float = 0.05
+    signal_fee_per_contract_dollars: float = 0.02
+    signal_min_volume: float = 10.0
+    signal_min_top_level_contracts: float = 5.0
+    signal_max_data_age_seconds: float = 10.0
+
     @property
     def has_credentials(self) -> bool:
         return bool(self.api_key_id and self.private_key_path)
@@ -123,4 +130,9 @@ def load_settings(env_file: str | None = None) -> Settings:
         ema_rsi_candles_url=os.getenv("EMA_RSI_CANDLES_URL", DEFAULT_EMA_RSI_CANDLES_URL),
         signal_research_enabled=os.getenv("SIGNAL_RESEARCH_ENABLED", "false").strip().lower() == "true",
         signal_research_interval_hours=float(os.getenv("SIGNAL_RESEARCH_INTERVAL_HOURS", "168")),
+        signal_min_net_edge_dollars=float(os.getenv("SIGNAL_MIN_NET_EDGE_DOLLARS", "0.05")),
+        signal_fee_per_contract_dollars=float(os.getenv("SIGNAL_FEE_PER_CONTRACT_DOLLARS", "0.02")),
+        signal_min_volume=float(os.getenv("SIGNAL_MIN_VOLUME", "10")),
+        signal_min_top_level_contracts=float(os.getenv("SIGNAL_MIN_TOP_LEVEL_CONTRACTS", "5")),
+        signal_max_data_age_seconds=float(os.getenv("SIGNAL_MAX_DATA_AGE_SECONDS", "10")),
     )

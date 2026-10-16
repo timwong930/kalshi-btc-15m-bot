@@ -5,6 +5,7 @@ import math
 
 from config.settings import Settings
 from src.divergence import check_divergence
+from src.edge_signals import EdgeSignal, evaluate_edge_signal
 from src.kalshi_client import KalshiClient
 from src.markets import MarketSnapshot, get_orderbook_summary
 from src.orders import get_balance, get_positions, place_order
@@ -51,28 +52,49 @@ class Trader:
         try:
             self._price_feed.fetch_and_record()
         except Exception:
-            logger.exception("Failed to fetch BTC price; skipping this tick's prediction")
+            logger.exception("Failed to fetch BTC price; skipping prediction")
+            signal = EdgeSignal("SKIP", "BTC spot feed request failed")
+            self._storage.insert_edge_signal_audit(snapshot, None, None, signal, self._settings, None)
+            logger.info("Edge signal: %s", signal.log_line(self._settings.signal_fee_per_contract_dollars))
             return
 
         prediction = predict(snapshot, self._price_feed, self._settings)
-
         self._storage.record_market_open(snapshot, prediction, self._settings.series_ticker)
 
+        orderbook = None
         try:
             orderbook = get_orderbook_summary(self._client, snapshot.ticker)
             self._storage.insert_orderbook_snapshot(orderbook)
         except Exception:
             logger.exception("Failed to fetch/store orderbook for %s", snapshot.ticker)
 
-        self._check_divergence(snapshot)
-        self._maybe_fetch_trend(snapshot.ticker)
+        latest_sample = getattr(self._price_feed, "latest_sample", lambda: None)()
+        signal = evaluate_edge_signal(
+            snapshot,
+            prediction,
+            orderbook,
+            self._settings,
+            price_sample_time=latest_sample.ts if latest_sample is not None else None,
+        )
+        # Audit is a prerequisite to displaying a candidate or proposing any
+        # demo order; a DB write error must not silently discard the evidence.
+        self._storage.insert_edge_signal_audit(
+            snapshot, prediction, orderbook, signal, self._settings,
+            latest_sample.ts if latest_sample is not None else None,
+        )
+        logger.info("Edge signal: %s", signal.log_line(self._settings.signal_fee_per_contract_dollars))
 
+        self._check_divergence(snapshot)
         if prediction is None:
+            self._maybe_fetch_trend(snapshot.ticker)
             return
 
         self._storage.fill_initial_prediction_if_missing(snapshot.ticker, prediction)
         self._storage.insert_prediction(prediction)
         logger.info("Prediction: %s", prediction.rationale)
+
+        # Slower trend HTTP request comes after the time-sensitive audit.
+        self._maybe_fetch_trend(snapshot.ticker)
 
         if not self._should_propose_trade(snapshot, prediction):
             return

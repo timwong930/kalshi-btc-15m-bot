@@ -8,7 +8,10 @@ from pathlib import Path
 
 from config.settings import load_settings
 
-TABLES = ["snapshots", "settled_outcomes", "predictions", "orders", "market_lifecycle", "orderbook_snapshots"]
+TABLES = [
+    "snapshots", "settled_outcomes", "predictions", "orders", "market_lifecycle",
+    "orderbook_snapshots", "edge_signal_audit",
+]
 
 
 def backup_database(db_path: str, backup_dir: str, keep: int = 10) -> Path:
@@ -39,7 +42,15 @@ def export_csv(db_path: str, backup_dir: str) -> list[Path]:
     conn.row_factory = sqlite3.Row
     written: list[Path] = []
     try:
+        # Older databases and small test fixtures may predate the audit table.
+        # Export available known tables without creating or modifying any schema.
+        existing_tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
         for table in TABLES:
+            if table not in existing_tables:
+                continue
             rows = conn.execute(f"SELECT * FROM {table}").fetchall()
             if not rows:
                 continue

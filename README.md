@@ -381,6 +381,108 @@ Coinbase's spot price is a proxy for BRTI, not the real settlement feed, and
 short-horizon crypto volatility is famously unstable. Treat predictions as a
 starting point, not a guarantee.
 
+## Read-only BUY UP / BUY DOWN / SKIP signals
+
+`python -m src.main --predict` now logs a research-only decision every time
+the model has sufficient BTC observations. Example (illustrative only):
+
+```text
+Edge signal: BUY UP CANDIDATE (research only): model=85.0%, executable_ask=0.7000, estimated_net_edge=+0.1300 dollars/contract, top_level_depth=20, ASSUMED_fee=0.0200 dollars/contract; not a validated trading recommendation
+```
+
+It also prints `SKIP` with the reason whenever there is no sufficiently
+positive edge or market data is too thin/stale. There is **no API key or
+trade execution in this feature**. `--predict` cannot place orders even if a
+demo API key happens to be configured. The optional pre-existing `--trade`
+feature proposes independently chosen **demo-only** trades using its
+original confidence gate; research signals do **not** trigger or approve
+those orders.
+
+The evaluator compares the predictor's probability to the **buy-side
+executable top-of-book ask**, reconstructed from Kalshi's complementary
+resting bid orders: UP ask = 1 - highest DOWN bid; DOWN ask = 1 - highest
+UP bid. It checks top-level depth, market volume, clock/quote freshness,
+consistency against the market snapshot, and time remaining. The highest
+net expected edge is:
+
+```text
+model_probability_of_outcome - executable_ask - ASSUMED_fee_per_contract
+```
+
+Configurable environment variables in `.env`:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `SIGNAL_FEE_PER_CONTRACT_DOLLARS` | `0.02` | Assumed fee per purchased contract, **not fetched from Kalshi** |
+| `SIGNAL_MIN_NET_EDGE_DOLLARS` | `0.05` | Minimum modeled profit per $1 winning contract after assumed fee |
+| `SIGNAL_MIN_VOLUME` | `10` | Minimum traded market volume |
+| `SIGNAL_MIN_TOP_LEVEL_CONTRACTS` | `5` | Minimum opposite-book bid quantity at best level |
+| `SIGNAL_MAX_DATA_AGE_SECONDS` | `10` | Maximum quote/feed age when decision is computed |
+
+The existing `TRADE_WINDOW_MIN_SECONDS` and `TRADE_WINDOW_MAX_SECONDS`
+also apply to research signals (default 60–780 seconds remaining).
+
+**This is not a proven edge.** The simple probability model is known to
+overstate certainty in the tails; the Coinbase quote is only a proxy for
+the licensed settlement index. Fees are estimates; fillability and slippage
+can differ from the observed book. Signals are not trades and do not
+guarantee a win or profit. Backtest against timestamped Kalshi executable
+quotes and settled outcomes before relying on them.
+
+For **production data, but no account credentials or trading**, run:
+
+```bash
+KALSHI_ENV=prod KALSHI_API_KEY_ID= KALSHI_PRIVATE_KEY_PATH= \
+TRADING_ENABLED=false MULTI_STRATEGY_TRADING_ENABLED=false \
+python -m src.main --predict
+```
+
+## Audit trail and post-settlement review
+
+Every evaluation made by `--predict` is now committed to the local SQLite
+database at `DB_PATH` (default `data/kalshi_btc15m.db`) in the **append-only**
+`edge_signal_audit` table. This includes **SKIP** decisions before the model
+has enough samples or when BTC price feeds fail, in addition to BUY candidates.
+Each record includes its UTC timestamp, market ticker, BTC/strike/market
+quotes, model estimate, complete order-book levels, assumed fee and decision
+thresholds, chosen side, candidate ask/depth, modeled edge, version, and full
+reason for skipping. Keys, secrets, and balances are **never stored** in this
+table.
+
+Existing historical data in the same SQLite database is retained; the audit
+table is created without discarding any previous tables. **Old signals from
+before this feature was enabled cannot be reconstructed as genuine audit
+records.** Audit collection begins when you start the updated process.
+
+While `--predict` continues monitoring in one SSH session, open a second
+session to review:
+
+```bash
+cd ~/Documents/kalshi-btc-15m-bot
+source .venv/bin/activate
+python -m src.audit_report --limit 20
+python -m src.audit_report --csv data/audit/all_signal_evaluations.csv
+python -m src.backup --csv
+```
+
+The report automatically joins each evaluation to `settled_outcomes`, populated
+by the existing hourly settlement-backfill process (so recent outcomes can be
+pending for an hour or more). It shows per-day activity and why signals were
+skipped. To avoid treating consecutive 20-second polls as independent bets,
+win rates and hypothetical settlement returns use the **first BUY candidate
+per market only**, and never treat unfilled BUY suggestions as executed orders.
+
+The CSV includes every individual BUY/SKIP evaluation, plus the known market
+result and an explicitly labeled **counterfactual one-contract P&L, if filled
+at the observed ask with the assumed fee**. This is **not** real profit,
+proof of executable fills, or a measure of out-of-sample model calibration.
+The existing automatic SQLite backup process includes the table, and
+`src.backup --csv` exports it as a separate file too.
+
+To optionally keep the raw Python console lines in a human-readable log,
+launch the read-only command via `2>&1 | tee -a logs/predict.log` after running
+`mkdir -p logs`. The SQLite audit works without this console log.
+
 ## Setup
 
 ```bash
