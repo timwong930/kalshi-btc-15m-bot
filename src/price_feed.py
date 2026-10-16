@@ -39,6 +39,10 @@ class PriceFeed:
         self._samples.append(sample)
         return sample
 
+    def latest_sample(self) -> PriceSample | None:
+        """Timestamped independent BTC quote for freshness checks."""
+        return self._samples[-1] if self._samples else None
+
     def latest_price(self) -> float | None:
         return self._samples[-1].price if self._samples else None
 
