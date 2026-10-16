@@ -11,7 +11,15 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
 
 from src.research_labels import build_labels, nearest_prior
-from src.research_stream import Book, ResearchStore, backup_research_database, parse_brti, parse_coinbase_ticker, parse_ms, read_only_ws_headers
+from src.research_stream import (
+    Book,
+    ResearchStore,
+    backup_research_database,
+    parse_brti,
+    parse_coinbase_ticker,
+    parse_ms,
+    read_only_ws_headers,
+)
 
 
 def test_coinbase_ticker_uses_exchange_timestamp_and_ignores_other_products():
@@ -156,8 +164,10 @@ def test_research_store_backup_preserves_rows_without_credentials(tmp_path):
 
 @pytest.mark.parametrize("algorithm", ["rsa", "ed25519"])
 def test_research_ws_signs_get_handshake_only(tmp_path, algorithm):
-    private = rsa.generate_private_key(public_exponent=65537, key_size=2048) if algorithm == "rsa" \
-        else ed25519.Ed25519PrivateKey.generate()
+    if algorithm == "rsa":
+        private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    else:
+        private = ed25519.Ed25519PrivateKey.generate()
     path = tmp_path / "research.pem"
     path.write_bytes(private.private_bytes(
         encoding=serialization.Encoding.PEM,
