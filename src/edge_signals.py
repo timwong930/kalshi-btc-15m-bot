@@ -17,6 +17,8 @@ from config.settings import Settings
 from src.markets import MarketSnapshot, OrderbookSummary
 from src.predictor import Prediction
 
+SIGNAL_VERSION = "edge-v1-audit-20261015"
+
 
 @dataclass(frozen=True)
 class EdgeSignal:
@@ -34,7 +36,7 @@ class EdgeSignal:
             f"{self.action} CANDIDATE (research only): "
             f"model={self.model_probability:.1%}, "
             f"executable_ask={self.ask_dollars:.4f}, "
-            f"estimated_net_edge={self.estimated_net_edge_dollars:+.4f} dollars/contract, "
+            f"estimated_net_edge={self.estimated_net_edge_dollars:+.6f} dollars/contract, "
             f"top_level_depth={self.available_contracts:g}, "
             f"ASSUMED_fee={assumed_fee:.4f} dollars/contract; "
             "not a validated trading recommendation"
@@ -102,30 +104,37 @@ def evaluate_edge_signal(
     up = _ask_from_opposite_bids(book.no_levels)
     down = _ask_from_opposite_bids(book.yes_levels)
     possibilities = []
+    excluded = []
     for action, quote, model_p, displayed_ask in (
         ("BUY UP", up, prediction.probability_yes, snapshot.yes_ask),
         ("BUY DOWN", down, 1 - prediction.probability_yes, snapshot.no_ask),
     ):
         if quote is None:
+            excluded.append(f"{action}: no opposite-side resting bid")
             continue
         ask, depth = quote
         if depth < min_depth:
+            excluded.append(f"{action}: best-price depth {depth:g} below {min_depth:g}")
             continue
-        # Don't compare a newer order book against a materially different old
-        # snapshot/model, even if the snapshots are within the freshness window.
+        # Mismatched asynchronous REST responses should never be traded.
         if displayed_ask is not None and abs(ask - displayed_ask) > 0.03:
+            excluded.append(f"{action}: book ask {ask:.4f} vs snapshot {displayed_ask:.4f}")
             continue
         edge = model_p - ask - fee
         possibilities.append((edge, action, model_p, ask, depth))
 
     if not possibilities:
-        return EdgeSignal("SKIP", "no liquid, consistent executable top-of-book quote")
+        return EdgeSignal("SKIP", "; ".join(excluded) or "no executable quote")
     edge, action, model_p, ask, depth = max(possibilities, key=lambda item: item[0])
     if edge < threshold:
         return EdgeSignal(
             "SKIP",
-            f"best modeled edge {edge:+.4f} dollars/contract below threshold "
-            f"{threshold:.4f} (fee assumption {fee:.4f})",
+            f"best modeled edge {edge:+.6f} dollars/contract below threshold "
+            f"{threshold:.6f} (fee assumption {fee:.4f})",
+            model_probability=model_p,
+            ask_dollars=ask,
+            estimated_net_edge_dollars=edge,
+            available_contracts=depth,
         )
     return EdgeSignal(
         action=action,
