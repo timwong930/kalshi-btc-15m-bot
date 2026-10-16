@@ -16,11 +16,19 @@ from pathlib import Path
 from config.settings import load_settings
 
 
-def nearest_prior(prices: list[tuple[int, float]], timestamp_ms: int, max_age_ms: int = 10000):
+def nearest_prior(
+    prices: list[tuple[int, float]],
+    timestamp_ms: int,
+    max_age_ms: int = 10000,
+    timestamps: list[int] | None = None,
+):
     if not prices:
         return None
-    idx = bisect_right(prices, (timestamp_ms, float("inf"))) - 1
-    if idx < 0 or timestamp_ms - prices[idx][0] > max_age_ms:
+    # Timestamps may duplicate; binary search only the monotonically
+    # ordered timestamps, never (time, price) tuples.
+    times = timestamps if timestamps is not None else [tick[0] for tick in prices]
+    idx = bisect_right(times, timestamp_ms) - 1
+    if idx < 0 or timestamp_ms - times[idx] > max_age_ms:
         return None
     return prices[idx][1]
 
@@ -83,6 +91,7 @@ def build_labels(
             for row in odb.execute("SELECT ticker, result FROM settled_outcomes WHERE result IN ('yes', 'no')")
         }
         prices = {source: _price_rows(rdb, source) for source in ("coinbase", "brti")}
+        price_times = {source: [tick[0] for tick in data] for source, data in prices.items()}
         meta = rdb.execute(
             "SELECT ticker, close_ms, strike FROM research_markets ORDER BY close_ms"
         ).fetchall()
@@ -172,8 +181,8 @@ def build_labels(
                             "ticker": ticker, "entry_ms": t, "close_ms": close_ms, "side": side,
                             "quote_source": selected, "market_strike": strike,
                             "seconds_remaining": remaining,
-                            "btc_price_asof": nearest_prior(prices["coinbase"], t),
-                            "brti_price_asof": nearest_prior(prices["brti"], t),
+                            "btc_price_asof": nearest_prior(prices["coinbase"], t, timestamps=price_times["coinbase"]),
+                            "brti_price_asof": nearest_prior(prices["brti"], t, timestamps=price_times["brti"]),
                             "entry_ask": ask, "entry_bid": bid, "entry_top_depth": entry_depth,
                             "entry_spread": ask - bid, "assumed_fee_per_side": fee_per_side,
                             "assumed_slippage_per_side": slippage_per_side,
