@@ -363,6 +363,33 @@ async def run_collector(database: str, poll_seconds: float, kalshi_ws: bool, key
         store.close()
 
 
+def print_status(path: str) -> None:
+    db = Path(path).resolve()
+    if not db.is_file():
+        print(f"No research database yet: {db}")
+        return
+    conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+    try:
+        for table in ("research_prices", "research_quotes", "research_markets", "research_events"):
+            count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            print(f"{table}: {count:,}")
+        for source, count, last_ms in conn.execute(
+            "SELECT source, COUNT(*), MAX(received_ms) FROM research_prices GROUP BY source"
+        ):
+            print(f"price source {source}: {count:,} ticks; last receipt ms={last_ms}")
+        for source, count, last_ms in conn.execute(
+            "SELECT source, COUNT(*), MAX(received_ms) FROM research_quotes GROUP BY source"
+        ):
+            print(f"quote source {source}: {count:,} updates; last receipt ms={last_ms}")
+        for timestamp, source, event_type, details in conn.execute(
+            "SELECT received_ms, source, event_type, details FROM research_events "
+            "ORDER BY id DESC LIMIT 5"
+        ):
+            print(f"event {timestamp} {source} {event_type}: {details}")
+    finally:
+        conn.close()
+
+
 def main() -> None:
     from dotenv import load_dotenv
 
@@ -371,7 +398,11 @@ def main() -> None:
     parser.add_argument("--db", default=os.getenv("RESEARCH_DB_PATH", "data/research_stream.db"))
     parser.add_argument("--rest-seconds", type=float, default=float(os.getenv("RESEARCH_REST_SECONDS", "5")))
     parser.add_argument("--kalshi-ws", action="store_true", help="Opt into signed Kalshi market-data WS")
+    parser.add_argument("--status", action="store_true", help="Inspect current research DB and exit")
     args = parser.parse_args()
+    if args.status:
+        print_status(args.db)
+        return
     if args.rest_seconds < 5:
         parser.error("--rest-seconds must be >=5 to avoid excessive REST polling")
     key_id = os.getenv("RESEARCH_KALSHI_API_KEY_ID", "")
