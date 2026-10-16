@@ -9,6 +9,7 @@ from src.kalshi_client import KalshiClient
 from src.markets import MarketSnapshot, get_orderbook_summary
 from src.orders import get_balance, get_positions, place_order
 from src.predictor import Prediction, predict
+from src.edge_signals import evaluate_edge_signal
 from src.price_feed import PriceFeed
 from src.storage import Storage
 from src.trend import fetch_trend_state
@@ -58,6 +59,7 @@ class Trader:
 
         self._storage.record_market_open(snapshot, prediction, self._settings.series_ticker)
 
+        orderbook = None
         try:
             orderbook = get_orderbook_summary(self._client, snapshot.ticker)
             self._storage.insert_orderbook_snapshot(orderbook)
@@ -73,6 +75,18 @@ class Trader:
         self._storage.fill_initial_prediction_if_missing(snapshot.ticker, prediction)
         self._storage.insert_prediction(prediction)
         logger.info("Prediction: %s", prediction.rationale)
+
+        # Read-only research signal: never submits orders or alters existing
+        # manually confirmed demo-trading criteria.
+        latest_sample = getattr(self._price_feed, "latest_sample", lambda: None)()
+        signal = evaluate_edge_signal(
+            snapshot,
+            prediction,
+            orderbook,
+            self._settings,
+            price_sample_time=latest_sample.ts if latest_sample is not None else None,
+        )
+        logger.info("Edge signal: %s", signal.log_line(self._settings.signal_fee_per_contract_dollars))
 
         if not self._should_propose_trade(snapshot, prediction):
             return
