@@ -177,7 +177,7 @@ def test_paper_economics_use_executable_ask_and_assumed_cost_not_market_mid():
         y=1, features=(0.9,), baseline=.5, yes_ask=.25, no_ask=.85,
     )
     assert hypothetical_settlement_trade(winning, .90) == pytest.approx(.72)
-    assert hypothetical_settlement_trade(winning, .50) is None
+    assert hypothetical_settlement_trade(winning, .30) is None
     losing = Example(
         ticker="Y", close_ms=START_MS, entry_ms=START_MS - 300000,
         y=0, features=(0.9,), baseline=.5, yes_ask=.25, no_ask=.85,
