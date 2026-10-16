@@ -183,6 +183,27 @@ def log_loss(p: float, label: int) -> float:
     return -(label * math.log(safe) + (1 - label) * math.log(1 - safe))
 
 
+def hypothetical_settlement_trade(
+    example: Example, predicted_yes: float, *, assumed_fee: float = 0.02,
+    assumed_slippage: float = 0.01, minimum_edge: float = 0.05,
+) -> float | None:
+    """One-contract *hypothetical* buy/hold payout on test markets only.
+
+    Uses observed top-of-book ask (not midpoint) and estimated buy costs.
+    NEVER an observed fill, executable order, or actual realized P&L.
+    """
+    if example.yes_ask is None or example.no_ask is None:
+        return None
+    total_cost = assumed_fee + assumed_slippage
+    up_edge = predicted_yes - example.yes_ask - total_cost
+    down_edge = (1 - predicted_yes) - example.no_ask - total_cost
+    if max(up_edge, down_edge) < minimum_edge:
+        return None
+    if up_edge >= down_edge:
+        return float(example.y) - example.yes_ask - total_cost
+    return float(1 - example.y) - example.no_ask - total_cost
+
+
 def grouped_markets(examples: list[Example]) -> list[tuple[int, str, list[Example]]]:
     groups = defaultdict(list)
     for e in examples:
@@ -220,6 +241,8 @@ def walk_forward(
         )
         return result
     baseline_losses, model_losses, base_logs, model_logs = [], [], [], []
+    hypothetical_model_returns = []
+    hypothetical_baseline_returns = []
     differences = []
     fold_summaries = []
     for end in range(min_train_markets, len(groups) - fold_test_markets + 1, fold_test_markets):
@@ -237,6 +260,17 @@ def walk_forward(
         train_rate = _clamp(mean(row.y for row in train))
         fold_market_differences = []
         for _, _, cohort in test_groups:
+            if baseline_type == "market":
+                # Outcome dataset contains one observation per market.
+                for example in cohort:
+                    modeled = hypothetical_settlement_trade(
+                        example, model.predict(example.features)
+                    )
+                    baseline_trade = hypothetical_settlement_trade(example, example.baseline)
+                    if modeled is not None:
+                        hypothetical_model_returns.append(modeled)
+                    if baseline_trade is not None:
+                        hypothetical_baseline_returns.append(baseline_trade)
             observed_model = [brier(model.predict(e.features), e.y) for e in cohort]
             observed_base = [
                 brier(e.baseline if baseline_type == "market" else train_rate, e.y)
@@ -280,6 +314,15 @@ def walk_forward(
         "paired_brier_improvement": difference,
         "paired_brier_95pct_interval": [difference - margin, difference + margin],
         "brier_improvement_supported": len(differences) >= 100 and difference - margin > 0,
+        "hypothetical_one_contract_hold_to_settlement": {
+            "assumed_buy_fee": 0.02, "assumed_buy_slippage": 0.01,
+            "minimum_modeled_net_edge": 0.05,
+            "challenger_candidates": len(hypothetical_model_returns),
+            "challenger_net_return_sum": sum(hypothetical_model_returns),
+            "baseline_candidates": len(hypothetical_baseline_returns),
+            "baseline_net_return_sum": sum(hypothetical_baseline_returns),
+            "never_actual_fills": True,
+        } if baseline_type == "market" else None,
         "fold_details": fold_summaries,
         "approval": "RESEARCH_ONLY_NEVER_AUTO_PROMOTE",
     })
