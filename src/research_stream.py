@@ -266,12 +266,16 @@ async def kalshi_rest_loop(store: ResearchStore, poll_seconds: float, current_ma
                              snapshot.floor_strike, snapshot.strike_type)
                 top_yes = max(book.yes_levels, default=(None, None))
                 top_no = max(book.no_levels, default=(None, None))
+                # Quote only from the fetched bid book: a later/earlier market
+                # snapshot must not be misrepresented as a tradable ask.
+                yes_bid, yes_depth = top_yes
+                no_bid, no_depth = top_no
                 store.quote(
                     ticker, "kalshi_rest", now_ms(),
-                    yes_bid=snapshot.yes_bid, yes_ask=snapshot.yes_ask,
-                    no_bid=snapshot.no_bid, no_ask=snapshot.no_ask,
-                    yes_depth=top_yes[1], no_depth=top_no[1],
-                    volume=snapshot.volume,
+                    yes_bid=yes_bid, no_bid=no_bid,
+                    yes_ask=(1 - no_bid) if no_bid is not None else None,
+                    no_ask=(1 - yes_bid) if yes_bid is not None else None,
+                    yes_depth=yes_depth, no_depth=no_depth, volume=snapshot.volume,
                 )
         except asyncio.CancelledError:
             raise
