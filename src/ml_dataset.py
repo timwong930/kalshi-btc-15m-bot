@@ -10,9 +10,9 @@ import csv
 import math
 import sqlite3
 from collections import Counter
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from contextlib import closing
 from statistics import pstdev
 
 FEATURES = (
