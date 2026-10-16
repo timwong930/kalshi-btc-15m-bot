@@ -9,9 +9,10 @@ from __future__ import annotations
 import csv
 import math
 import sqlite3
-from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+from contextlib import closing
 from statistics import pstdev
 
 FEATURES = (
@@ -96,7 +97,7 @@ def collect_outcome_examples(
     research_db: str, outcomes_db: str,
 ) -> tuple[list[Example], dict]:
     """One observation near 5m before close per settled market; verify all inputs."""
-    with read_only(research_db) as research, read_only(outcomes_db) as outcomes:
+    with closing(read_only(research_db)) as research, closing(read_only(outcomes_db)) as outcomes:
         settled = {
             row["ticker"]: row["result"]
             for row in outcomes.execute(
@@ -104,7 +105,7 @@ def collect_outcome_examples(
             )
         }
         markets = research.execute(
-            "SELECT ticker, close_ms, strike FROM research_markets ORDER BY close_ms, ticker"
+            "SELECT ticker, close_ms, strike, strike_type FROM research_markets ORDER BY close_ms, ticker"
         ).fetchall()
         reasons = Counter()
         examples = []
@@ -112,6 +113,9 @@ def collect_outcome_examples(
             ticker, close_ms, strike = market["ticker"], market["close_ms"], market["strike"]
             if ticker not in settled:
                 reasons["unsettled"] += 1
+                continue
+            if market["strike_type"] != "greater_or_equal":
+                reasons["unsupported_strike_type"] += 1
                 continue
             if strike is None or not math.isfinite(strike) or strike <= 0:
                 reasons["invalid_strike"] += 1
@@ -231,7 +235,7 @@ def load_reversal_examples(csv_path: str, max_seconds_from_target: float = 100) 
 
 
 def stream_quality(research_db: str) -> dict:
-    with read_only(research_db) as db:
+    with closing(read_only(research_db)) as db:
         sources = {
             "price_" + r["source"]: r["n"]
             for r in db.execute(
