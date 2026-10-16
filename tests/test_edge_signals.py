@@ -27,7 +27,7 @@ def _fixtures(
     s = MarketSnapshot(
         ticker="KXBTC15M-TEST",
         event_ticker="TEST",
-        status="open",
+        status="active",  # actual API status for an open market
         yes_bid=yes_bid,
         yes_ask=1 - no_bid,
         no_bid=no_bid,
