@@ -248,6 +248,29 @@ def stream_quality(research_db: str) -> dict:
                 "SELECT source, count(*) AS n FROM research_quotes GROUP BY source"
             )
         })
+        # Gaps are measured per-market/per-source, so a normal 15-minute
+        # market rollover is not counted as a network outage.
+        gap_rows = db.execute(
+            """
+            WITH history AS (
+              SELECT source, ticker, received_ms,
+                     LAG(received_ms) OVER (
+                       PARTITION BY source, ticker ORDER BY received_ms, id
+                     ) AS previous_ms
+              FROM research_quotes WHERE valid=1
+            )
+            SELECT source, MAX(received_ms - previous_ms) AS max_gap_ms,
+                   SUM(CASE WHEN received_ms - previous_ms > 30000 THEN 1 ELSE 0 END) AS gaps_gt_30s
+            FROM history GROUP BY source
+            """
+        ).fetchall()
+        sources["per_market_quote_gaps"] = {
+            row["source"]: {
+                "max_gap_ms": row["max_gap_ms"],
+                "gaps_gt_30s": row["gaps_gt_30s"] or 0,
+            }
+            for row in gap_rows
+        }
         return sources
 
 
