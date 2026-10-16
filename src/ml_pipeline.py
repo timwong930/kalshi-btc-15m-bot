@@ -14,7 +14,7 @@ import logging
 import os
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,7 +80,7 @@ def initialize_registry(path: Path) -> sqlite3.Connection:
 
 def dataset_signature(research_path: str, outcomes_path: str) -> tuple[str, int]:
     """Changes only when a research market acquires/changes a settled result."""
-    with read_only(research_path) as research, read_only(outcomes_path) as outcomes:
+    with closing(read_only(research_path)) as research, closing(read_only(outcomes_path)) as outcomes:
         markets = {r["ticker"]: r["close_ms"] for r in research.execute(
             "SELECT ticker, close_ms FROM research_markets"
         )}
@@ -182,15 +182,21 @@ def run_cycle(
         ):
             report["models"][task] = {}
             for algorithm in ALGORITHMS:
-                metrics = walk_forward(
-                    examples, min_train_markets, fold_test_markets,
-                    baseline_type=baseline_type, algorithm=algorithm,
-                )
+                if in_cooldown:
+                    metrics = {
+                        "status": "TRAINING_COOLDOWN", "tested_markets": 0,
+                        "distinct_markets": len({e.ticker for e in examples}),
+                        "model": algorithm,
+                        "note": "New settled labels available; full walk-forward training runs daily",
+                    }
+                else:
+                    metrics = walk_forward(
+                        examples, min_train_markets, fold_test_markets,
+                        baseline_type=baseline_type, algorithm=algorithm,
+                    )
                 metrics["artifact"] = None
                 metrics["baseline"] = "Kalshi yes midpoint" if task == "outcome" else "training-only event prevalence"
-                if metrics["status"] == "SHADOW_EVALUATED" and in_cooldown:
-                    metrics["status"] = "EVALUATED_TRAINING_COOLDOWN"
-                elif metrics["status"] == "SHADOW_EVALUATED":
+                if metrics["status"] == "SHADOW_EVALUATED":
                     artifact = final_shadow_model(examples, names, algorithm)
                     artifact["dataset_hash"] = signature
                     artifact["research_task"] = task
