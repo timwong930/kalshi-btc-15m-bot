@@ -437,6 +437,52 @@ TRADING_ENABLED=false MULTI_STRATEGY_TRADING_ENABLED=false \
 python -m src.main --predict
 ```
 
+## Audit trail and post-settlement review
+
+Every evaluation made by `--predict` is now committed to the local SQLite
+database at `DB_PATH` (default `data/kalshi_btc15m.db`) in the **append-only**
+`edge_signal_audit` table. This includes **SKIP** decisions before the model
+has enough samples or when BTC price feeds fail, in addition to BUY candidates.
+Each record includes its UTC timestamp, market ticker, BTC/strike/market
+quotes, model estimate, complete order-book levels, assumed fee and decision
+thresholds, chosen side, candidate ask/depth, modeled edge, version, and full
+reason for skipping. Keys, secrets, and balances are **never stored** in this
+table.
+
+Existing historical data in the same SQLite database is retained; the audit
+table is created without discarding any previous tables. **Old signals from
+before this feature was enabled cannot be reconstructed as genuine audit
+records.** Audit collection begins when you start the updated process.
+
+While `--predict` continues monitoring in one SSH session, open a second
+session to review:
+
+```bash
+cd ~/Documents/kalshi-btc-15m-bot
+source .venv/bin/activate
+python -m src.audit_report --limit 20
+python -m src.audit_report --csv data/audit/all_signal_evaluations.csv
+python -m src.backup --csv
+```
+
+The report automatically joins each evaluation to `settled_outcomes`, populated
+by the existing hourly settlement-backfill process (so recent outcomes can be
+pending for an hour or more). It shows per-day activity and why signals were
+skipped. To avoid treating consecutive 20-second polls as independent bets,
+win rates and hypothetical settlement returns use the **first BUY candidate
+per market only**, and never treat unfilled BUY suggestions as executed orders.
+
+The CSV includes every individual BUY/SKIP evaluation, plus the known market
+result and an explicitly labeled **counterfactual one-contract P&L, if filled
+at the observed ask with the assumed fee**. This is **not** real profit,
+proof of executable fills, or a measure of out-of-sample model calibration.
+The existing automatic SQLite backup process includes the table, and
+`src.backup --csv` exports it as a separate file too.
+
+To optionally keep the raw Python console lines in a human-readable log,
+launch the read-only command via `2>&1 | tee -a logs/predict.log` after running
+`mkdir -p logs`. The SQLite audit works without this console log.
+
 ## Setup
 
 ```bash
