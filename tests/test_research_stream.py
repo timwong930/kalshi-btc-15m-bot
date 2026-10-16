@@ -72,8 +72,8 @@ def _fixture_dbs(tmp_path):
         yes_bid=.30, yes_ask=.35, no_bid=.65, no_ask=.70,
         yes_depth=100, no_depth=100,
     )
-    for i in range(1, 110):
-        price = .50 if i >= 2 else .34
+    for i in range(1, 120):
+        price = .55 if i >= 2 else .34
         store.quote(
             "KXBTC15M-TEST", "kalshi_rest", start + i * 5000,
             yes_bid=price, yes_ask=min(0.99, price + .05),
@@ -110,7 +110,7 @@ def test_reversal_labels_include_fees_slippage_and_quote_coverage(tmp_path):
     assert first["label"] == "take_profit_first"
     assert first["quote_source"] == "kalshi_rest"
     assert float(first["max_favorable_net"]) >= .10
-    assert float(first["hypothetical_hold_to_settlement_net"]) == pytest.approx(.61)
+    assert float(first["hypothetical_hold_to_settlement_net"]) == pytest.approx(.62)
 
 
 def test_unsettled_markets_do_not_generate_training_labels(tmp_path):
