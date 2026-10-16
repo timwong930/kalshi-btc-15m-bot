@@ -8,7 +8,10 @@ from pathlib import Path
 
 from config.settings import load_settings
 
-TABLES = [\n    "snapshots", "settled_outcomes", "predictions", "orders", "market_lifecycle",\n    "orderbook_snapshots", "edge_signal_audit",\n]
+TABLES = [
+    "snapshots", "settled_outcomes", "predictions", "orders", "market_lifecycle",
+    "orderbook_snapshots", "edge_signal_audit",
+]
 
 
 def backup_database(db_path: str, backup_dir: str, keep: int = 10) -> Path:
