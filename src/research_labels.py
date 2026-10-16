@@ -19,8 +19,7 @@ from config.settings import load_settings
 def nearest_prior(prices: list[tuple[int, float]], timestamp_ms: int, max_age_ms: int = 10000):
     if not prices:
         return None
-    positions = [p[0] for p in prices]
-    idx = bisect_right(positions, timestamp_ms) - 1
+    idx = bisect_right(prices, (timestamp_ms, float("inf"))) - 1
     if idx < 0 or timestamp_ms - prices[idx][0] > max_age_ms:
         return None
     return prices[idx][1]
