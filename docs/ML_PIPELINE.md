@@ -55,6 +55,9 @@ learned using training data only.
 
 - Outcome baseline: the observed Kalshi YES bid/ask midpoint.
 - Reversal baseline: the take-profit event rate in preceding TRAIN markets.
+- Also reports **hypothetical one-contract buy-and-hold settlement returns**
+  for test-market candidates, using observed ask plus assumed buying fees and
+  slippage (never actual fills or realistic queue execution).
 - Reports Brier score and log-loss for challenger and baseline, paired Brier
   differences by **distinct market**, fold details, and a descriptive
   normal-approximation uncertainty interval. Evidence remains exploratory
