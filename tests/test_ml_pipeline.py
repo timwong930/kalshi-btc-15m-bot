@@ -13,7 +13,13 @@ from src.ml_dataset import (
     collect_outcome_examples,
     load_reversal_examples,
 )
-from src.ml_models import final_shadow_model, fit_model, grouped_markets, walk_forward
+from src.ml_models import (
+    final_shadow_model,
+    fit_model,
+    grouped_markets,
+    hypothetical_settlement_trade,
+    walk_forward,
+)
 from src.ml_pipeline import run_cycle
 from src.research_stream import ResearchStore
 
@@ -163,3 +169,17 @@ def test_cycle_preserves_original_dbs_and_is_idempotent(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM research_markets").fetchone()[0] == 1
     with sqlite3.connect(str(tmp_path / "ml" / "ml_runs.db")) as con:
         assert con.execute("SELECT COUNT(*) FROM ml_research_runs").fetchone()[0] == 1
+
+
+def test_paper_economics_use_executable_ask_and_assumed_cost_not_market_mid():
+    winning = Example(
+        ticker="X", close_ms=START_MS, entry_ms=START_MS - 300000,
+        y=1, features=(0.9,), baseline=.5, yes_ask=.25, no_ask=.85,
+    )
+    assert hypothetical_settlement_trade(winning, .90) == pytest.approx(.72)
+    assert hypothetical_settlement_trade(winning, .50) is None
+    losing = Example(
+        ticker="Y", close_ms=START_MS, entry_ms=START_MS - 300000,
+        y=0, features=(0.9,), baseline=.5, yes_ask=.25, no_ask=.85,
+    )
+    assert hypothetical_settlement_trade(losing, .90) == pytest.approx(-.28)
