@@ -1,14 +1,17 @@
 """Offline parser and conservative paper-replay regression tests (no network)."""
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import sqlite3
 
 import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
 
 from src.research_labels import build_labels, nearest_prior
-from src.research_stream import Book, ResearchStore, parse_brti, parse_coinbase_ticker, parse_ms
+from src.research_stream import Book, ResearchStore, backup_research_database, parse_brti, parse_coinbase_ticker, parse_ms, read_only_ws_headers
 
 
 def test_coinbase_ticker_uses_exchange_timestamp_and_ignores_other_products():
@@ -136,3 +139,40 @@ def test_unsupported_training_parameters_rejected(tmp_path):
     research, outcome = _fixture_dbs(tmp_path)
     with pytest.raises(ValueError):
         build_labels(research, outcome, str(tmp_path / "bad.csv"), fee_per_side=-0.01)
+
+
+def test_research_store_backup_preserves_rows_without_credentials(tmp_path):
+    db = str(tmp_path / "research.db")
+    store = ResearchStore(db)
+    store.price("coinbase", 82200, 1792130400100, 1792130400110, "ticker")
+    store.event("research", "heartbeat")
+    store.close()
+    backup = backup_research_database(db, str(tmp_path / "backups"))
+    assert backup.is_file()
+    with sqlite3.connect(str(backup)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM research_prices").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM research_events").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("algorithm", ["rsa", "ed25519"])
+def test_research_ws_signs_get_handshake_only(tmp_path, algorithm):
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048) if algorithm == "rsa" \
+        else ed25519.Ed25519PrivateKey.generate()
+    path = tmp_path / "research.pem"
+    path.write_bytes(private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+    headers = read_only_ws_headers("example-key", str(path))
+    payload = (headers["KALSHI-ACCESS-TIMESTAMP"] + "GET" + "/trade-api/ws/v2").encode()
+    signature = base64.b64decode(headers["KALSHI-ACCESS-SIGNATURE"])
+    assert headers["KALSHI-ACCESS-KEY"] == "example-key"
+    if algorithm == "rsa":
+        private.public_key().verify(
+            signature, payload,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
+            hashes.SHA256(),
+        )
+    else:
+        private.public_key().verify(signature, payload)
