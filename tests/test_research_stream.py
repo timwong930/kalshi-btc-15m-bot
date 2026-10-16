@@ -4,11 +4,10 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.research_labels import build_labels, nearest_prior, valid_quote
+from src.research_labels import build_labels, nearest_prior
 from src.research_stream import Book, ResearchStore, parse_brti, parse_coinbase_ticker, parse_ms
 
 
