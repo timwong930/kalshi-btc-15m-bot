@@ -140,7 +140,9 @@ def inspect_research(db: sqlite3.Connection, *, now_ms: int) -> dict:
         "limitations": [
             "Global quote gaps across tickers are not evidence of within-market outages.",
             "Within-market gaps may reflect inactive books or sparse updates, not necessarily collector failures.",
-            "Static book-eligible means only spread/depth/price checks passed; it does not confirm quote freshness, settlement eligibility, available fill, or a simulated trade.",
+            ("Static book-eligible means only spread/depth/price checks passed; "
+             "it does not confirm quote freshness, settlement eligibility, available fill, "
+             "or a simulated trade."),
             "A market discovered after the entry window opened may have partial coverage.",
         ],
     }
