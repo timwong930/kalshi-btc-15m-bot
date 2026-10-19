@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from src.ml_dataset import FEATURES
 from src.paper_sim import (
     Policy,
     _predict_shadow,
@@ -15,6 +16,7 @@ from src.paper_sim import (
     open_ledger,
     report,
     run_tick,
+    save_reports,
     shadow_artifacts,
 )
 from src.research_stream import ResearchStore
@@ -79,6 +81,10 @@ def test_prospective_entries_exit_math_and_idempotent_ledger(tmp_path):
         assert stats["strategies"]["price_rule"]["net_simulated_pnl_per_one_contract_each"] == .14
         assert stats["no_trade_baseline_pnl"] == 0.0
         assert stats["never_actual_fills"] is True
+        save_reports(ledger, str(tmp_path / "report"))
+        assert (tmp_path / "report" / "latest_metrics.json").exists()
+        assert (tmp_path / "report" / "paper_trades.csv").exists()
+        assert (tmp_path / "report" / "equity_curves.csv").exists()
     finally:
         ledger.close()
         source.close()
@@ -166,9 +172,9 @@ def test_shadows_cannot_use_post_entry_training_or_future_artifact(tmp_path):
         "mode": "SHADOW_RESEARCH_ONLY",
         "live_trading_approval": False,
         "trained_through_close_ms": T + 30000,
-        "feature_names": ["a"],
-        "feature_means": [0.0], "feature_scales": [1.0],
-        "weights": [0.0], "intercept": 1.0,
+        "feature_names": list(FEATURES),
+        "feature_means": [0.0] * len(FEATURES), "feature_scales": [1.0] * len(FEATURES),
+        "weights": [0.0] * len(FEATURES), "intercept": 1.0,
     }
     path.write_text(json.dumps(data))
     os.utime(path, (T / 1000 - 10, T / 1000 - 10))
@@ -180,7 +186,7 @@ def test_shadows_cannot_use_post_entry_training_or_future_artifact(tmp_path):
     os.utime(path, (T / 1000 - 10, T / 1000 - 10))
     artifact, digest = shadow_artifacts(str(models), T)["outcome_logistic"]
     assert len(digest) == 64
-    assert _predict_shadow(artifact, (0.2,)) == pytest.approx(.73105858)
+    assert _predict_shadow(artifact, (0.2,) * len(FEATURES)) == pytest.approx(.73105858)
     data["live_trading_approval"] = True
     path.write_text(json.dumps(data))
     os.utime(path, (T / 1000 - 10, T / 1000 - 10))
