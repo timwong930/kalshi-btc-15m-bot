@@ -31,9 +31,9 @@ def prepare(tmp_path):
     paper_file = str(tmp_path / "paper.db")
     store = ResearchStore(research_file)
     store.market(TICKER, CLOSE, 82000., "greater_or_equal")
-    # Simulate pre-existing historical observations BEFORE startup.
+    # Simulate an otherwise trade-eligible observation BEFORE startup.
     store.quote(
-        TICKER, "kalshi_rest", T - 500000, yes_bid=.25, yes_ask=.30,
+        TICKER, "kalshi_rest", T + 10000, yes_bid=.25, yes_ask=.30,
         no_bid=.70, no_ask=.75, yes_depth=15, no_depth=15,
     )
     source = sqlite3.connect(research_file)
@@ -53,6 +53,8 @@ def quote(store, t, *, yes_bid=.25, yes_ask=.30):
 def test_prospective_entries_exit_math_and_idempotent_ledger(tmp_path):
     store, source, ledger = prepare(tmp_path)
     try:
+        assert ledger.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
+        run_tick(source, ledger, str(tmp_path / "none"), Policy(), now_ms=T + 10500)
         assert ledger.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
         quote(store, T + 10000)
         run_tick(source, ledger, str(tmp_path / "none"), Policy(), now_ms=T + 10500)
