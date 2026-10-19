@@ -105,9 +105,29 @@ def open_ledger(path: str, collector: sqlite3.Connection) -> sqlite3.Connection:
         db.execute("INSERT INTO paper_meta VALUES('starting_quote_id', ?)", (str(cursor),))
         db.execute("INSERT INTO paper_meta VALUES('created_epoch_ms', ?)", (str(int(time.time() * 1000)),))
         db.commit()
-    elif db.execute("SELECT value FROM paper_meta WHERE key='last_quote_id'").fetchone() is None:
-        db.close()
-        raise ValueError("Existing paper DB has no cursor; refusing to infer or replay old trades")
+    else:
+        persisted = db.execute(
+            "SELECT value FROM paper_meta WHERE key='last_quote_id'"
+        ).fetchone()
+        if persisted is None:
+            db.close()
+            raise ValueError("Existing paper DB has no cursor; refusing to infer or replay old trades")
+        # A stopped process did NOT continuously observe the market.
+        # On restart, abandon any open quote-based TP/SL simulation rather
+        # than invent fills during the outage, and fast-forward the cursor.
+        newest = collector.execute(
+            "SELECT COALESCE(MAX(id),0) FROM research_quotes"
+        ).fetchone()[0]
+        with db:
+            db.execute(
+                """UPDATE paper_trades SET status='CENSORED',
+                   reason='simulator_restart_unobserved_quotes'
+                   WHERE status='OPEN'"""
+            )
+            db.execute(
+                "UPDATE paper_meta SET value=? WHERE key='last_quote_id'",
+                (str(max(int(persisted[0]), newest)),),
+            )
     return db
 
 
