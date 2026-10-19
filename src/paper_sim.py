@@ -595,7 +595,10 @@ def main() -> None:
                 while True:
                     counters = run_tick(source, db, args.model_dir, policy)
                     if counters["processed"]:
-                        LOG.info("Processed %s quote events; cursor=%s", counters["processed"], counters["last_quote_id"])
+                        LOG.info(
+                            "Processed %s quote events; cursor=%s",
+                            counters["processed"], counters["last_quote_id"],
+                        )
                     if not args.loop or time.monotonic() - last_report >= args.report_seconds:
                         snapshot = save_reports(db, args.reports_dir)
                         last_report = time.monotonic()
