@@ -224,3 +224,32 @@ def test_invalid_policy_fails_closed():
         Policy(min_depth=-1)
     with pytest.raises(ValueError):
         Policy(max_quote_gap_ms=10)
+
+
+def test_restart_censors_open_position_and_drops_unseen_quotes(tmp_path):
+    store, source, ledger = prepare(tmp_path)
+    try:
+        quote(store, T + 10000)
+        run_tick(source, ledger, "", Policy(), now_ms=T + 11000)
+        trade = ledger.execute(
+            "SELECT * FROM paper_trades WHERE strategy='price_rule'"
+        ).fetchone()
+        assert trade["status"] == "OPEN"
+        ledger.close()
+        # This unobserved quote would have looked like a profitable exit.
+        quote(store, T + 15000, yes_bid=.70, yes_ask=.75)
+        restarted = open_ledger(str(tmp_path / "paper.db"), source)
+        try:
+            orphaned = restarted.execute(
+                "SELECT * FROM paper_trades WHERE strategy='price_rule'"
+            ).fetchone()
+            assert orphaned["status"] == "CENSORED"
+            assert orphaned["pnl_per_contract"] is None
+            assert orphaned["reason"] == "simulator_restart_unobserved_quotes"
+            result = run_tick(source, restarted, "", Policy(), now_ms=T + 16000)
+            assert result["processed"] == 0
+        finally:
+            restarted.close()
+    finally:
+        source.close()
+        store.close()
