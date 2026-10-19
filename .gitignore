@@ -20,6 +20,7 @@ dist/
 *.sqlite3
 data/backups/
 data/ml_research/
+data/paper_research/
 data/research/
 
 # Logs
