@@ -7,6 +7,7 @@ No demo orders, credentials, network calls, model promotions, or live trading.
 from __future__ import annotations
 
 import argparse
+import csv
 import fcntl
 import hashlib
 import json
@@ -19,7 +20,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.ml_dataset import _asof, _vol_60s, read_only
+from src.ml_dataset import FEATURES, REVERSAL_FEATURES, _asof, _vol_60s, read_only
 
 LOG = logging.getLogger("virtual_paper")
 ONE_MINUTE_MS = 60_000
@@ -196,9 +197,13 @@ def shadow_artifacts(directory: str, time_ms: int) -> dict[str, tuple[dict, str]
             task, algo = model["research_task"], model["algorithm"]
             if task not in ("outcome", "reversal") or algo not in ALGORITHM_NAMES.values():
                 continue
+
             if model.get("mode") != "SHADOW_RESEARCH_ONLY" or model.get("live_trading_approval") is not False:
                 continue
             if int(model["trained_through_close_ms"]) >= time_ms:
+                continue
+            expected = FEATURES if task == "outcome" else REVERSAL_FEATURES
+            if tuple(model.get("feature_names", ())) != expected:
                 continue
             algo_key = next(k for k, v in ALGORITHM_NAMES.items() if v == algo)
             key = f"{task}_{algo_key}"
@@ -493,6 +498,55 @@ def report(ledger: sqlite3.Connection) -> dict:
     }
 
 
+def _atomic_text(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(path.name + ".tmp")
+    pending.write_text(contents, encoding="utf-8")
+    os.replace(pending, path)
+
+
+def save_reports(ledger: sqlite3.Connection, folder: str) -> dict:
+    """Export persistent per-trade evidence and closed-trade equity histories."""
+    import io
+
+    output = Path(folder).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    totals = report(ledger)
+    totals["reported_epoch_ms"] = int(time.time() * 1000)
+    _atomic_text(output / "latest_metrics.json", json.dumps(totals, sort_keys=True, indent=2) + "\n")
+    trades = ledger.execute(
+        "SELECT * FROM paper_trades ORDER BY strategy, opened_ms, id"
+    ).fetchall()
+    buff = io.StringIO()
+    if trades:
+        fields = list(trades[0].keys())
+        writer = csv.DictWriter(buff, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(dict(t) for t in trades)
+    else:
+        buff.write("id,ticker,strategy,status,pnl_per_contract\n")
+    _atomic_text(output / "paper_trades.csv", buff.getvalue())
+    curve = io.StringIO()
+    writer = csv.writer(curve)
+    writer.writerow(["strategy", "exit_ms", "ticker", "trade_id", "pnl_per_contract", "cumulative_pnl", "drawdown"])
+    for strategy in STRATEGIES:
+        prior = ledger.execute(
+            "SELECT id, ticker, exit_ms, pnl_per_contract FROM paper_trades "
+            "WHERE strategy=? AND status='CLOSED' ORDER BY exit_ms, id",
+            (strategy,),
+        ).fetchall()
+        equity = peak = 0.0
+        for trade in prior:
+            equity += trade["pnl_per_contract"]
+            peak = max(peak, equity)
+            writer.writerow([
+                strategy, trade["exit_ms"], trade["ticker"], trade["id"],
+                trade["pnl_per_contract"], round(equity, 6), round(peak - equity, 6),
+            ])
+    _atomic_text(output / "equity_curves.csv", curve.getvalue())
+    return totals
+
+
 @contextmanager
 def singleton(lock_path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -509,34 +563,46 @@ def singleton(lock_path: Path):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Read-only prospective VIRTUAL paper trading; never submits orders")
-    parser.add_argument("--research-db", required=True)
+    parser.add_argument("--research-db", help="Read-only collector database; required unless --status")
     parser.add_argument("--paper-db", default="data/paper_research/paper.db")
+    parser.add_argument("--reports-dir", default="data/paper_research")
     parser.add_argument("--model-dir", default="data/ml_research/shadow_models")
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=5)
+    parser.add_argument("--report-seconds", type=float, default=300)
     args = parser.parse_args()
+    if args.report_seconds < 10:
+        parser.error("Report interval must be >=10 seconds")
     if args.poll_seconds < 1:
         parser.error("Poll interval must be >=1 second")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     policy = Policy()
+    if not args.research_db and not args.status:
+        parser.error("--research-db is required to run the prospective simulator")
     if args.status:
         if not Path(args.paper_db).is_file():
             print("No virtual paper ledger exists yet")
             return
         with closing(sqlite3.connect(args.paper_db)) as db:
             db.row_factory = sqlite3.Row
-            print(json.dumps(report(db), indent=2))
+            print(json.dumps(save_reports(db, args.reports_dir), indent=2))
         return
     with singleton(Path(args.paper_db).resolve().parent / "paper.lock"):
         with closing(read_only(args.research_db)) as source:
             with closing(open_ledger(args.paper_db, source)) as db:
+                last_report = 0.0
                 while True:
                     counters = run_tick(source, db, args.model_dir, policy)
                     if counters["processed"]:
                         LOG.info("Processed %s quote events; cursor=%s", counters["processed"], counters["last_quote_id"])
+                    if not args.loop or time.monotonic() - last_report >= args.report_seconds:
+                        snapshot = save_reports(db, args.reports_dir)
+                        last_report = time.monotonic()
+                        LOG.info("Virtual paper report saved: %s closed trades",
+                                 sum(item["closed_trades"] for item in snapshot["strategies"].values()))
                     if not args.loop:
-                        print(json.dumps(report(db), indent=2))
+                        print(json.dumps(snapshot, indent=2))
                         break
                     time.sleep(args.poll_seconds)
 
