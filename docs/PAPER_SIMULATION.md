@@ -10,8 +10,9 @@ automatic model selection, or model promotion.
 This is **prospective forward paper research**, not a retrospective backtest
 of historical quotes. On the first launch, the ledger saves the collector's
 latest quote ID and **does not trade any previously collected quotes**.
-When restarted, it resumes from the saved cursor but rejects delayed quotes:
-it will **not simulate trades at prices from downtime**.
+On restart, it **censors still-open simulated positions and fast-forwards
+past all unobserved quotes**. It will **not simulate trades or exits at prices
+from downtime**. Restarting is a conservative reset, not a replay.
 
 ### Strategies running head-to-head (one simulated contract, max one entry per
 market per strategy)
