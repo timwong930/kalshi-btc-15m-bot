@@ -381,6 +381,23 @@ Coinbase's spot price is a proxy for BRTI, not the real settlement feed, and
 short-horizon crypto volatility is famously unstable. Treat predictions as a
 starting point, not a guarantee.
 
+## Phase 4: prospective simulated paper strategies (no orders)
+
+`python -m src.paper_sim --loop` runs a **fourth**, isolated,
+simulated paper-trading process against newly received historical
+research quotes. It compares a fixed price rule, BTC momentum rule,
+outcome logistic/stumps and reversal logistic/stumps. Only shadow model
+files created and trained **before** a market entry are eligible; never
+uses hindsight or Kalshi balances, credentials, order endpoints, demo
+orders or live real-money trading. All simulated fills at observed
+bid/ask prices remain unconfirmed assumptions, with explicit costs
+and censoring on missing quotes. Records an independent per-trade
+audit, strategy P&L, win rate and drawdown, with a no-trade baseline.
+
+See [docs/PAPER_SIMULATION.md](docs/PAPER_SIMULATION.md) for dedicated
+Mac Studio worktree, fourth tmux window, exact safety guarantees,
+and the limitations of quote-based forward simulation.
+
 ## Phase 2 + Phase 3: autonomous historical ML research
 
 A third, isolated process validates newly settled research markets, generates
