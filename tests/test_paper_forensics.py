@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from src.paper_forensics import analyze, diagnose
+from src.paper_forensics import diagnose
 
 
 def make_ledger(tmp_path):
