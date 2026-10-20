@@ -158,11 +158,15 @@ def analyze(
         "strategies": results,
         "limitations": [
             "Entry bid is observed at the SAME timestamp as entry ask; it is not an actual exit.",
-            "A stop at unchanged entry bid means the first later eligible quote COULD stop with no bid rise; it does not prove the later bid was unchanged.",
-            "The simulator requires a later quote at least min_hold_ms after entry and may censor invalid or delayed quotes.",
-            "This uses the stored entry cost and current Phase 4 Policy exit-side assumptions, not verified Kalshi contract fees.",
+            ("A stop at unchanged entry bid means the first later eligible quote COULD stop "
+             "with no bid rise; it does not prove the later bid was unchanged."),
+            ("The simulator requires a later quote at least min_hold_ms after entry "
+             "and may censor invalid or delayed quotes."),
+            ("This uses the stored entry cost and current Phase 4 Policy exit-side "
+             "assumptions, not verified Kalshi contract fees."),
             "Open and censored trades are included for entry-time spread analysis, but have no inferred exit P&L.",
-            "This is descriptive on already-observed data. Do not optimize thresholds against this same sample and claim out-of-sample profitability.",
+            ("This is descriptive on already-observed data. Do not optimize thresholds "
+             "against this same sample and claim out-of-sample profitability."),
         ],
     }
 
