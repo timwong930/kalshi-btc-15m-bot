@@ -10,7 +10,6 @@ import argparse
 import fcntl
 import json
 import logging
-import os
 import sqlite3
 import time
 from collections import Counter
