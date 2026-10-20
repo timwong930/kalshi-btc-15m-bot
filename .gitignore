@@ -21,6 +21,7 @@ dist/
 data/backups/
 data/ml_research/
 data/paper_research/
+data/settlement_shadow/
 data/research/
 
 # Logs
