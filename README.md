@@ -381,6 +381,21 @@ Coinbase's spot price is a proxy for BRTI, not the real settlement feed, and
 short-horizon crypto volatility is famously unstable. Treat predictions as a
 starting point, not a guarantee.
 
+## Phase 2 + Phase 3: autonomous historical ML research
+
+A third, isolated process validates newly settled research markets, generates
+both outcome and hypothetical price-reversal datasets, and compares regularized
+logistic regression with boosted-stump challengers using **chronological,
+market-grouped walk-forward evaluation**. It writes local shadow model files
+and an audit report. **No automatic model promotion, order placement, or
+changes to the running prediction bot.** The trainer works on existing data
+and checks for newly settled markets every 15 minutes; full model evaluation
+is limited to daily. It waits until at least 80 usable settled markets exist.
+
+See [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) for separate Mac Studio
+worktree setup, deployment to the existing tmux session, reports, and
+statistical limitations.
+
 ## New: read-only realtime research data collector
 
 To collect richer BTC / Kalshi data for eventual machine-learning research,
