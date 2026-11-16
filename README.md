@@ -385,7 +385,9 @@ starting point, not a guarantee.
 
 `python -m src.paper_sim --loop` runs a **fourth**, isolated,
 simulated paper-trading process against newly received historical
-research quotes. It compares a fixed price rule, BTC momentum rule,
+research quotes. It compares a fixed price rule, BTC momentum rule, a
+causal spot-distance candidate (default: at least 3 bps from strike and
+ask no higher than $0.80),
 outcome logistic/stumps and reversal logistic/stumps. Only shadow model
 files created and trained **before** a market entry are eligible; never
 uses hindsight or Kalshi balances, credentials, order endpoints, demo
@@ -393,6 +395,10 @@ orders or live real-money trading. All simulated fills at observed
 bid/ask prices remain unconfirmed assumptions, with explicit costs
 and censoring on missing quotes. Records an independent per-trade
 audit, strategy P&L, win rate and drawdown, with a no-trade baseline.
+
+The spot-distance rule is a research candidate, not a profitability claim:
+its historical parameter search is exploratory and must be followed by a
+fresh prospective quote-only observation window before promotion.
 
 See [docs/PAPER_SIMULATION.md](docs/PAPER_SIMULATION.md) for dedicated
 Mac Studio worktree, fourth tmux window, exact safety guarantees,
@@ -408,6 +414,12 @@ and an audit report. **No automatic model promotion, order placement, or
 changes to the running prediction bot.** The trainer works on existing data
 and checks for newly settled markets every 15 minutes; full model evaluation
 is limited to daily. It waits until at least 80 usable settled markets exist.
+
+Before publishing any ML evaluation or shadow-model artifact, the pipeline now
+requires a fresh Kalshi WebSocket quote source with bounded source latency. It
+records per-source freshness for Kalshi WebSocket, Kalshi REST, Coinbase, and
+BRTI; stale, latency-missing, or REST-only runs fail closed as
+`DATA_QUALITY_BLOCKED`, while zero-holdout runs publish no evaluation artifact.
 
 See [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) for separate Mac Studio
 worktree setup, deployment to the existing tmux session, reports, and

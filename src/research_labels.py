@@ -14,6 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from config.settings import load_settings
+from src.ml_dataset import project_path
 
 
 def nearest_prior(
@@ -78,8 +79,8 @@ def build_labels(
         raise ValueError("negative fee, profit, loss, slippage or depth")
     if sample_interval_ms < 1000 or maximum_gap_ms < 1000 or min_hold_ms < 0:
         raise ValueError("invalid timing thresholds")
-    research = Path(research_path).resolve()
-    outcomes = Path(outcomes_path).resolve()
+    research = project_path(research_path)
+    outcomes = project_path(outcomes_path)
     if not research.is_file() or not outcomes.is_file():
         raise FileNotFoundError("Both the research and existing settled-outcomes databases must exist")
     rdb = sqlite3.connect(f"{research.as_uri()}?mode=ro", uri=True)

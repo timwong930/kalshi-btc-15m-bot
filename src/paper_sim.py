@@ -20,12 +20,12 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.ml_dataset import FEATURES, REVERSAL_FEATURES, _asof, _vol_60s, read_only
+from src.ml_dataset import FEATURES, REVERSAL_FEATURES, _asof, _vol_60s, project_path, read_only
 
 LOG = logging.getLogger("virtual_paper")
 ONE_MINUTE_MS = 60_000
 STRATEGIES = (
-    "price_rule", "momentum_rule",
+    "price_rule", "momentum_rule", "spot_distance_rule",
     "outcome_logistic", "outcome_boosted_stumps",
     "reversal_logistic", "reversal_boosted_stumps",
 )
@@ -48,6 +48,8 @@ class Policy:
     min_hold_ms: int = 1_000
     model_outcome_edge: float = 0.08
     model_reversal_min_probability: float = 0.70
+    spot_distance_min_bps: float = 3.0
+    spot_distance_max_ask: float = 0.80
 
     def __post_init__(self):
         if not (0 < self.entry_window_end_seconds < self.entry_window_start_seconds < 900):
@@ -59,6 +61,7 @@ class Policy:
             self.max_spread, self.fee_per_side, self.slippage_per_side,
             self.take_profit, self.stop_loss, self.min_hold_ms,
             self.model_outcome_edge, self.model_reversal_min_probability,
+            self.spot_distance_min_bps, self.spot_distance_max_ask,
         )
         if any(not math.isfinite(v) or v < 0 for v in values):
             raise ValueError("Invalid paper trading policy")
@@ -68,7 +71,7 @@ class Policy:
 
 def open_ledger(path: str, collector: sqlite3.Connection) -> sqlite3.Connection:
     """New ledgers begin at the collector's current max ID: NO historical fills."""
-    dest = Path(path).resolve()
+    dest = project_path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     is_new = not dest.exists()
     db = sqlite3.connect(str(dest), timeout=20)
@@ -204,7 +207,7 @@ def _predict_shadow(artifact: dict, values: tuple[float, ...]) -> float | None:
 def shadow_artifacts(directory: str, time_ms: int) -> dict[str, tuple[dict, str]]:
     """Freeze only artifact files known and completed strictly before entry."""
     output = {}
-    base = Path(directory)
+    base = project_path(directory)
     if not base.is_dir():
         return output
     for path in base.glob("*.json"):
@@ -296,6 +299,16 @@ def choose_side(
         if side is None or asks[side] > 0.75:
             return None, None, None, "no_causal_momentum_signal"
         return side, None, None, "fixed_momentum_rule"
+    if strategy == "spot_distance_rule":
+        if features is None:
+            return None, None, None, "missing_causal_spot_features"
+        spot_bps = features[0][1]
+        if not math.isfinite(spot_bps) or abs(spot_bps) < policy.spot_distance_min_bps:
+            return None, None, None, "spot_distance_below_threshold"
+        side = "up" if spot_bps > 0 else "down"
+        if asks[side] > policy.spot_distance_max_ask:
+            return None, None, None, "spot_distance_ask_above_cap"
+        return side, None, None, "causal_spot_distance_rule"
     key = strategy
     package = artifacts.get(key)
     if package is None:
@@ -529,7 +542,7 @@ def save_reports(ledger: sqlite3.Connection, folder: str) -> dict:
     """Export persistent per-trade evidence and closed-trade equity histories."""
     import io
 
-    output = Path(folder).resolve()
+    output = project_path(folder)
     output.mkdir(parents=True, exist_ok=True)
     totals = report(ledger)
     totals["reported_epoch_ms"] = int(time.time() * 1000)
@@ -601,16 +614,18 @@ def main() -> None:
     if not args.research_db and not args.status:
         parser.error("--research-db is required to run the prospective simulator")
     if args.status:
-        if not Path(args.paper_db).is_file():
+        paper_db = project_path(args.paper_db)
+        if not paper_db.is_file():
             print("No virtual paper ledger exists yet")
             return
-        with closing(sqlite3.connect(args.paper_db)) as db:
+        with closing(sqlite3.connect(str(paper_db))) as db:
             db.row_factory = sqlite3.Row
             print(json.dumps(save_reports(db, args.reports_dir), indent=2))
         return
-    with singleton(Path(args.paper_db).resolve().parent / "paper.lock"):
+    paper_db = project_path(args.paper_db)
+    with singleton(paper_db.parent / "paper.lock"):
         with closing(read_only(args.research_db)) as source:
-            with closing(open_ledger(args.paper_db, source)) as db:
+            with closing(open_ledger(str(paper_db), source)) as db:
                 last_report = 0.0
                 while True:
                     counters = run_tick(source, db, args.model_dir, policy)

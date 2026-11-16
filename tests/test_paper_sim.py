@@ -13,6 +13,7 @@ from src.paper_sim import (
     Policy,
     _predict_shadow,
     causal_features,
+    choose_side,
     open_ledger,
     report,
     run_tick,
@@ -50,6 +51,33 @@ def quote(store, t, *, yes_bid=.25, yes_ask=.30):
     )
 
 
+def test_spot_distance_rule_uses_causal_distance_and_ask_cap(tmp_path):
+    store, source, ledger = prepare(tmp_path)
+    try:
+        row = source.execute(
+            "SELECT * FROM research_quotes WHERE ticker=? ORDER BY id LIMIT 1",
+            (TICKER,),
+        ).fetchone()
+        features = ((.50, 3.1, .5, .05, 3., 3., .01, 1.), {})
+        side, probability, digest, reason = choose_side(
+            "spot_distance_rule", source, row, features, {}, Policy(),
+        )
+        assert (side, probability, digest, reason) == (
+            "up", None, None, "causal_spot_distance_rule",
+        )
+
+        too_close = ((.50, 2.9, .5, .05, 3., 3., .01, 1.), {})
+        side, _, _, reason = choose_side(
+            "spot_distance_rule", source, row, too_close, {}, Policy(),
+        )
+        assert side is None
+        assert reason == "spot_distance_below_threshold"
+    finally:
+        ledger.close()
+        source.close()
+        store.close()
+
+
 def test_prospective_entries_exit_math_and_idempotent_ledger(tmp_path):
     store, source, ledger = prepare(tmp_path)
     try:
@@ -63,7 +91,7 @@ def test_prospective_entries_exit_math_and_idempotent_ledger(tmp_path):
         ).fetchone()
         assert first["entry_ask"] == pytest.approx(.30)
         assert first["status"] == "OPEN"
-        assert len(ledger.execute("SELECT * FROM paper_decisions").fetchall()) == 6
+        assert len(ledger.execute("SELECT * FROM paper_decisions").fetchall()) == 7
         assert not ledger.execute(
             "SELECT * FROM paper_trades WHERE strategy LIKE 'reversal_%'"
         ).fetchall()

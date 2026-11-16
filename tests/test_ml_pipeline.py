@@ -12,6 +12,7 @@ from src.ml_dataset import (
     Example,
     collect_outcome_examples,
     load_reversal_examples,
+    stream_quality,
 )
 from src.ml_models import (
     final_shadow_model,
@@ -150,9 +151,10 @@ def test_cycle_preserves_original_dbs_and_is_idempotent(tmp_path):
     research, outcomes, _ = _dbs(tmp_path)
     output = str(tmp_path / "ml")
     result = run_cycle(research, outcomes, output)
-    assert result["status"] == "WAITING_FOR_MORE_SETTLED_MARKETS"
+    assert result["status"] == "DATA_QUALITY_BLOCKED"
+    assert result["evaluation_published"] is False
     assert result["data_quality"]["usable_settled_markets"] == 1
-    assert result["models"]["outcome"]["logistic"]["status"] == "INSUFFICIENT_DATA"
+    assert result["models"]["outcome"]["logistic"]["status"] == "DATA_QUALITY_BLOCKED"
     assert result["models"]["outcome"]["boosted_stumps"]["artifact"] is None
     assert result["automatic_promotion_enabled"] is False
     assert result["trading_enabled"] is False
@@ -169,6 +171,66 @@ def test_cycle_preserves_original_dbs_and_is_idempotent(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM research_markets").fetchone()[0] == 1
     with sqlite3.connect(str(tmp_path / "ml" / "ml_runs.db")) as con:
         assert con.execute("SELECT COUNT(*) FROM ml_research_runs").fetchone()[0] == 1
+
+
+def test_stream_quality_reports_freshness_and_requires_ws_evidence(tmp_path):
+    research, _, ticker = _dbs(tmp_path)
+    now_ms = START_MS + 602000
+    with sqlite3.connect(research) as con:
+        con.execute(
+            "INSERT INTO research_quotes "
+            "(received_ms, source_ms, source, ticker, yes_bid, yes_ask, "
+            "no_bid, no_ask, yes_depth, no_depth, valid) "
+            "VALUES (?, ?, 'kalshi_ws', ?, .42, .47, .53, .58, 20, 18, 1)",
+            (now_ms - 1000, now_ms - 1200, ticker),
+        )
+        con.execute(
+            "INSERT INTO research_prices "
+            "(received_ms, source_ms, source, price, latency_ms, raw_type) "
+            "VALUES (?, ?, 'coinbase', 82000, 100, 'ticker')",
+            (now_ms - 500, now_ms - 600),
+        )
+    quality = stream_quality(research, now_ms=now_ms)
+    assert quality["source_quality"]["kalshi_ws"]["latest_received_ms"] == now_ms - 1000
+    assert quality["source_quality"]["kalshi_ws"]["age_ms"] == 1000
+    assert quality["source_quality"]["kalshi_ws"]["max_latency_ms"] == 200
+    assert quality["freshness_gate"]["ready"] is True
+
+    stale = stream_quality(research, now_ms=now_ms + 121000)
+    assert stale["freshness_gate"]["ready"] is False
+    assert "kalshi_ws_quote_stale" in stale["freshness_gate"]["reasons"]
+
+
+def test_stream_quality_accepts_fresh_rest_quotes_without_websocket(tmp_path):
+    research, _, ticker = _dbs(tmp_path)
+    now_ms = START_MS + 602000
+    with sqlite3.connect(research) as con:
+        con.execute(
+            "INSERT INTO research_quotes "
+            "(received_ms, source_ms, source, ticker, yes_bid, yes_ask, "
+            "no_bid, no_ask, yes_depth, no_depth, valid) "
+            "VALUES (?, ?, 'kalshi_rest', ?, .42, .47, .53, .58, 20, 18, 1)",
+            (now_ms - 1000, now_ms - 1200, ticker),
+        )
+    quality = stream_quality(research, now_ms=now_ms)
+    assert quality["freshness_gate"]["ready"] is True
+    assert quality["freshness_gate"]["required_quote_source"] == "kalshi_rest_or_ws"
+
+
+def test_stream_quality_accepts_rest_without_source_timestamp(tmp_path):
+    research, _, ticker = _dbs(tmp_path)
+    now_ms = START_MS + 602000
+    with sqlite3.connect(research) as con:
+        con.execute(
+            "INSERT INTO research_quotes "
+            "(received_ms, source, ticker, yes_bid, yes_ask, "
+            "no_bid, no_ask, yes_depth, no_depth, valid) "
+            "VALUES (?, 'kalshi_rest', ?, .42, .47, .53, .58, 20, 18, 1)",
+            (now_ms - 1000, ticker),
+        )
+    quality = stream_quality(research, now_ms=now_ms)
+    assert quality["freshness_gate"]["ready"] is True
+    assert quality["source_quality"]["kalshi_rest"]["latest_quote_source_ms_missing"] is True
 
 
 def test_paper_economics_use_executable_ask_and_assumed_cost_not_market_mid():
