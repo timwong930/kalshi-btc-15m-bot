@@ -39,6 +39,16 @@ class KalshiClient:
             with open(settings.private_key_path, "rb") as f:
                 self._private_key = serialization.load_pem_private_key(f.read(), password=None)
 
+        # Keep the public REST origin configurable.  Kalshi currently serves
+        # the same public market-data API from multiple origins; allowing a
+        # fallback avoids taking the collector down when one edge has a TLS
+        # or routing problem.  The default remains the configured origin.
+        self._fallback_base_urls = tuple(
+            url.strip().rstrip("/")
+            for url in getattr(settings, "fallback_base_urls", ())
+            if url.strip().rstrip("/") != settings.base_url.rstrip("/")
+        )
+
     def _signed_headers(self, method: str, path: str) -> dict[str, str]:
         if not self._private_key or not self._settings.api_key_id:
             return {}
@@ -56,7 +66,7 @@ class KalshiClient:
         }
 
     @retry(
-        retry=retry_if_exception_type(RetryableKalshiError),
+        retry=retry_if_exception_type((RetryableKalshiError, requests.RequestException)),
         wait=wait_exponential_jitter(initial=1, max=30),
         stop=stop_after_attempt(5),
         reraise=True,
@@ -67,9 +77,19 @@ class KalshiClient:
         """`path` excludes the /trade-api/v2 prefix, which is part of base_url."""
         signing_path = f"/trade-api/v2{path}"
         headers = self._signed_headers(method, signing_path)
-        response = self._session.request(
-            method, f"{self._settings.base_url}{path}", params=params, json=json_body, headers=headers, timeout=10
-        )
+        urls = [self._settings.base_url, *self._fallback_base_urls]
+        last_transport_error = None
+        for base_url in urls:
+            try:
+                response = self._session.request(
+                    method, f"{base_url}{path}", params=params, json=json_body, headers=headers, timeout=10
+                )
+                break
+            except requests.RequestException as exc:
+                last_transport_error = exc
+        else:
+            assert last_transport_error is not None
+            raise last_transport_error
 
         if response.status_code == 429 or response.status_code >= 500:
             raise RetryableKalshiError(response.status_code, response.text)

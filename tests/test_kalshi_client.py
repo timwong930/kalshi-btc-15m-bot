@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 
+import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
@@ -46,7 +47,10 @@ class FakeSession:
 
     def request(self, method, url, params=None, json=None, headers=None, timeout=None):
         self.calls.append((method, url, params, json, headers))
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def test_unsigned_client_sends_no_auth_headers(tmp_path):
@@ -105,6 +109,18 @@ def test_retries_on_429_then_succeeds(tmp_path):
     assert len(session.calls) == 2
 
 
+def test_retries_on_transport_error_then_succeeds(tmp_path):
+    settings = _make_settings(tmp_path, with_credentials=False)
+    session = FakeSession([
+        requests.exceptions.SSLError("temporary TLS failure"),
+        FakeResponse(200, {"markets": ["ok"]}),
+    ])
+    client = KalshiClient(settings, session=session)
+
+    assert client.get("/markets") == {"markets": ["ok"]}
+    assert len(session.calls) == 2
+
+
 def test_raises_on_4xx_without_retry(tmp_path):
     settings = _make_settings(tmp_path, with_credentials=False)
     session = FakeSession([FakeResponse(404, {"error": "not found"})])
@@ -156,3 +172,20 @@ def test_paginates_across_cursor(tmp_path):
 
     assert items == ["a", "b", "c"]
     assert len(session.calls) == 2
+
+
+def test_falls_back_to_secondary_public_origin_on_transport_error(tmp_path):
+    settings = _make_settings(tmp_path, with_credentials=False)
+    settings = settings.__class__(**{
+        **settings.__dict__,
+        "fallback_base_urls": ("https://secondary.example/trade-api/v2",),
+    })
+    session = FakeSession([
+        requests.exceptions.SSLError("primary TLS failure"),
+        FakeResponse(200, {"markets": ["ok"]}),
+    ])
+    client = KalshiClient(settings, session=session)  # type: ignore[arg-type]
+
+    assert client.get("/markets") == {"markets": ["ok"]}
+    assert session.calls[0][1].startswith(settings.base_url)
+    assert session.calls[1][1].startswith("https://secondary.example")
