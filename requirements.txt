@@ -4,3 +4,4 @@ python-dotenv>=1.0
 tenacity>=8.2
 pytest>=8.0
 ruff>=0.6
+websockets>=14,<17

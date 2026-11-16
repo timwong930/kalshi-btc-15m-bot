@@ -21,6 +21,7 @@ class Settings:
     poll_interval_seconds: int
     db_path: str
     series_ticker: str
+    fallback_base_urls: tuple[str, ...]
 
     price_feed_url: str
     min_samples_for_prediction: int
@@ -100,6 +101,14 @@ def load_settings(env_file: str | None = None) -> Settings:
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "20")),
         db_path=os.getenv("DB_PATH", "data/kalshi_btc15m.db"),
         series_ticker=os.getenv("SERIES_TICKER", "KXBTC15M"),
+        fallback_base_urls=tuple(
+            value.strip().rstrip("/")
+            for value in os.getenv(
+                "KALSHI_FALLBACK_BASE_URLS",
+                "https://api.elections.kalshi.com/trade-api/v2",
+            ).split(",")
+            if value.strip()
+        ),
         price_feed_url=os.getenv("PRICE_FEED_URL", DEFAULT_PRICE_FEED_URL),
         min_samples_for_prediction=int(os.getenv("MIN_SAMPLES_FOR_PREDICTION", "5")),
         min_signal_confidence=float(os.getenv("MIN_SIGNAL_CONFIDENCE", "0.15")),

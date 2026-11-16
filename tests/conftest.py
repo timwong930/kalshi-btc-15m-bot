@@ -17,6 +17,7 @@ def make_settings(**overrides) -> Settings:
         poll_interval_seconds=1,
         db_path=":memory:",
         series_ticker="KXBTC15M",
+        fallback_base_urls=(),
         price_feed_url="https://example.invalid/ticker",
         min_samples_for_prediction=5,
         min_signal_confidence=0.15,

@@ -381,6 +381,19 @@ Coinbase's spot price is a proxy for BRTI, not the real settlement feed, and
 short-horizon crypto volatility is famously unstable. Treat predictions as a
 starting point, not a guarantee.
 
+## New: read-only realtime research data collector
+
+To collect richer BTC / Kalshi data for eventual machine-learning research,
+run `python -m src.research_stream` (public Coinbase WebSocket + Kalshi REST,
+**no account credentials or orders required**). Optionally enable authenticated
+Kalshi order-book / BRTI WebSockets with a **separate read-only key**. Use
+`python -m src.research_labels` to export after-settlement reversal labels
+and hypothetical fee/slippage-aware paper replay. Both are separate from
+the existing `--predict` process and never modify its trading decisions.
+
+**Setup, SSH commands, backups, and limitations:**
+[docs/RESEARCH_COLLECTOR.md](docs/RESEARCH_COLLECTOR.md).
+
 ## Read-only BUY UP / BUY DOWN / SKIP signals
 
 `python -m src.main --predict` now logs a research-only decision every time
