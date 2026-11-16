@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import math
 import sqlite3
+import time
 from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ REVERSAL_FEATURES = (
     "entry_ask", "entry_spread", "entry_depth_log", "time_left_fraction",
     "spot_vs_strike_bps", "side_is_up",
 )
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @dataclass(frozen=True)
@@ -40,8 +42,14 @@ class Example:
     label: str = ""
 
 
+def project_path(path: str | Path) -> Path:
+    """Anchor relative CLI paths to this project, avoiding cwd/TCC failures."""
+    candidate = Path(path).expanduser()
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
 def read_only(path: str) -> sqlite3.Connection:
-    target = Path(path).resolve()
+    target = project_path(path)
     if not target.is_file():
         raise FileNotFoundError(f"Database does not exist: {target}")
     conn = sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True, timeout=20)
@@ -234,7 +242,22 @@ def load_reversal_examples(csv_path: str, max_seconds_from_target: float = 100) 
     }
 
 
-def stream_quality(research_db: str) -> dict:
+def stream_quality(
+    research_db: str,
+    *,
+    now_ms: int | None = None,
+    max_quote_age_ms: int = 120_000,
+    max_source_latency_ms: int = 10_000,
+    require_kalshi_ws: bool = False,
+) -> dict:
+    """Summarize source freshness and fail closed on stale quote evidence.
+
+    REST and WebSocket are equivalent market-data evidence for this gate;
+    pass ``require_kalshi_ws=True`` only for experiments that specifically
+    require WebSocket-only evidence.
+    """
+    observed_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    expected_sources = ("kalshi_ws", "kalshi_rest", "coinbase", "brti")
     with closing(read_only(research_db)) as db:
         sources = {
             "price_" + r["source"]: r["n"]
@@ -270,6 +293,121 @@ def stream_quality(research_db: str) -> dict:
                 "gaps_gt_30s": row["gaps_gt_30s"] or 0,
             }
             for row in gap_rows
+        }
+        quote_quality = {
+            row["source"]: row
+            for row in db.execute(
+                """
+                SELECT source, COUNT(*) AS count, MAX(received_ms) AS latest_received_ms,
+                       MAX(CASE WHEN source_ms IS NOT NULL
+                                THEN received_ms - source_ms END) AS max_latency_ms,
+                       SUM(CASE WHEN source_ms IS NULL THEN 1 ELSE 0 END) AS missing_source_ms,
+                       (SELECT source_ms FROM research_quotes newest
+                        WHERE newest.source = quotes.source
+                        ORDER BY newest.received_ms DESC, newest.id DESC LIMIT 1)
+                        AS latest_source_ms
+                FROM research_quotes quotes GROUP BY source
+                """
+            )
+        }
+        price_quality = {
+            row["source"]: row
+            for row in db.execute(
+                """
+                SELECT source, COUNT(*) AS count, MAX(received_ms) AS latest_received_ms,
+                       MAX(latency_ms) AS max_latency_ms,
+                       SUM(CASE WHEN source_ms IS NULL THEN 1 ELSE 0 END) AS missing_source_ms
+                FROM research_prices GROUP BY source
+                """
+            )
+        }
+        source_quality = {}
+        for source in expected_sources:
+            quote = quote_quality.get(source)
+            price = price_quality.get(source)
+            latest_quote = quote["latest_received_ms"] if quote else None
+            latest_price = price["latest_received_ms"] if price else None
+            latest = max(x for x in (latest_quote, latest_price) if x is not None) \
+                if any(x is not None for x in (latest_quote, latest_price)) else None
+            latest_quote_latency = (
+                latest_quote - quote["latest_source_ms"]
+                if quote and latest_quote is not None and quote["latest_source_ms"] is not None
+                else None
+            )
+            source_quality[source] = {
+                "quote_count": int(quote["count"]) if quote else 0,
+                "price_count": int(price["count"]) if price else 0,
+                "latest_quote_received_ms": latest_quote,
+                "latest_price_received_ms": latest_price,
+                "latest_received_ms": latest,
+                "quote_age_ms": observed_ms - latest_quote if latest_quote is not None else None,
+                "price_age_ms": observed_ms - latest_price if latest_price is not None else None,
+                "age_ms": observed_ms - latest if latest is not None else None,
+                "latest_quote_latency_ms": latest_quote_latency,
+                "max_latency_ms": max(
+                    [x["max_latency_ms"] for x in (quote, price) if x and x["max_latency_ms"] is not None],
+                    default=None,
+                ),
+                "missing_source_ms": sum(
+                    int(x["missing_source_ms"] or 0) for x in (quote, price) if x
+                ),
+                "latest_quote_source_ms_missing": bool(
+                    quote and quote["latest_source_ms"] is None
+                ),
+            }
+        candidates = ("kalshi_ws",) if require_kalshi_ws else ("kalshi_ws", "kalshi_rest")
+        eligible = []
+        for source in candidates:
+            quality = source_quality[source]
+            if (
+                quality["quote_count"] > 0
+                and quality["quote_age_ms"] is not None
+                and 0 <= quality["quote_age_ms"] <= max_quote_age_ms
+                and (
+                    source == "kalshi_rest"
+                    or (
+                        not quality["latest_quote_source_ms_missing"]
+                        and quality["latest_quote_latency_ms"] is not None
+                        and 0 <= quality["latest_quote_latency_ms"] <= max_source_latency_ms
+                    )
+                )
+            ):
+                eligible.append(source)
+        reasons = []
+        if not eligible:
+            label = "kalshi_ws" if require_kalshi_ws else "kalshi_rest_or_ws"
+            if not any(source_quality[s]["quote_count"] for s in candidates):
+                reasons.append(f"missing_required_quote_source:{label}")
+            else:
+                for source in candidates:
+                    quality = source_quality[source]
+                    if quality["quote_count"] and source not in eligible:
+                        reasons.append(
+                            "kalshi_ws_quote_stale" if source == "kalshi_ws"
+                            else "kalshi_rest_quote_stale"
+                        )
+                        if quality["latest_quote_source_ms_missing"]:
+                            reasons.append(
+                                "kalshi_ws_source_latency_missing" if source == "kalshi_ws"
+                                else "kalshi_rest_source_latency_missing"
+                            )
+                        if (
+                            quality["latest_quote_latency_ms"] is not None
+                            and quality["latest_quote_latency_ms"] > max_source_latency_ms
+                        ):
+                            reasons.append(
+                                "kalshi_ws_source_latency_exceeded" if source == "kalshi_ws"
+                                else "kalshi_rest_source_latency_exceeded"
+                            )
+        sources["source_quality"] = source_quality
+        sources["freshness_gate"] = {
+            "ready": not reasons,
+            "required_quote_source": "kalshi_ws" if require_kalshi_ws else "kalshi_rest_or_ws",
+            "selected_quote_source": eligible[0] if eligible else None,
+            "max_quote_age_ms": max_quote_age_ms,
+            "max_source_latency_ms": max_source_latency_ms,
+            "observed_ms": observed_ms,
+            "reasons": reasons,
         }
         return sources
 

@@ -23,6 +23,7 @@ from src.ml_dataset import (
     REVERSAL_FEATURES,
     collect_outcome_examples,
     load_reversal_examples,
+    project_path,
     read_only,
     stream_quality,
     write_examples,
@@ -126,7 +127,7 @@ def run_cycle(
     train_every_hours: float = 24, force: bool = False,
 ) -> dict:
     """Idempotent, autonomous settled-history preparation and shadow research."""
-    output = Path(output_dir).resolve()
+    output = project_path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     signature, settled_count = dataset_signature(research_db, outcomes_db)
     registry = initialize_registry(output / "ml_runs.db")
@@ -171,6 +172,7 @@ def run_cycle(
             "mode": "READ_ONLY_SHADOW_RESEARCH",
             "trading_enabled": False,
             "automatic_promotion_enabled": False,
+            "evaluation_published": False,
             "historical_market_count_not_independent_ticks": len(outcomes),
             "assumptions": {
                 "reversal_fee_per_side_dollars": 0.02,
@@ -181,6 +183,32 @@ def run_cycle(
         next_allowed = last_trained + train_every_hours * 3600
         in_cooldown = time.time() < next_allowed and not force
         any_trained = False
+        if not quality["stream_counts"]["freshness_gate"]["ready"]:
+            reasons = quality["stream_counts"]["freshness_gate"]["reasons"]
+            for task, examples in (("outcome", outcomes), ("reversal", reversals)):
+                report["models"][task] = {
+                    algorithm: {
+                        "status": "DATA_QUALITY_BLOCKED",
+                        "tested_markets": 0,
+                        "distinct_markets": len({e.ticker for e in examples}),
+                        "model": algorithm,
+                        "artifact": None,
+                        "note": "Evaluation withheld until quote freshness gate passes",
+                        "blocked_reasons": reasons,
+                    }
+                    for algorithm in ALGORITHMS
+                }
+            report["status"] = "DATA_QUALITY_BLOCKED"
+            report["evaluation_blocked_reasons"] = reasons
+            atomic_json(output / "latest_report.json", report)
+            registry.execute(
+                "INSERT INTO ml_research_runs (created_utc, dataset_hash, newly_evaluated, "
+                "settled_markets, usable_markets, status, report_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (report["generated_at_utc"], signature, int(new_settlements),
+                 settled_count, len(outcomes), report["status"], json.dumps(report, sort_keys=True)),
+            )
+            registry.commit()
+            return report
         for task, examples, names, baseline_type in (
             ("outcome", outcomes, FEATURES, "market"),
             ("reversal", reversals, REVERSAL_FEATURES, "prevalence"),
@@ -211,6 +239,7 @@ def run_cycle(
                     metrics["artifact"] = str(path)
                     metrics["status"] = "SHADOW_TRAINED"
                     any_trained = True
+                    report["evaluation_published"] = True
                 report["models"][task][algorithm] = metrics
 
         report["status"] = (
@@ -232,7 +261,7 @@ def run_cycle(
 
 
 def print_status(output_dir: str) -> None:
-    output = Path(output_dir) / "latest_report.json"
+    output = project_path(output_dir) / "latest_report.json"
     if not output.exists():
         print(f"Waiting for first ML research run: {output}")
         return
@@ -277,7 +306,7 @@ def main() -> None:
     if args.interval_minutes < 1 or args.train_every_hours < 0:
         parser.error("Invalid training cadence")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    with singleton(Path(args.output_dir).resolve() / "trainer.lock"):
+    with singleton(project_path(args.output_dir) / "trainer.lock"):
         while True:
             try:
                 result = run_cycle(
